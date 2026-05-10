@@ -162,4 +162,6 @@ logs/
 *.tmp
 *.bak
 *~.nib
-\graphify-out
+
+# Generated output folders
+graphify-out/
