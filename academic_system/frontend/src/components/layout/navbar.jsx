@@ -1,6 +1,6 @@
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { LogOut, User, GraduationCap, Calendar, ClipboardList, FolderOpen, Users, Menu, X, LayoutDashboard, BookOpen, Settings, UserPlus, Edit3, FileText } from 'lucide-react';
-import { getUser, removeUser } from '../../lib/api';
+import { clearAuthSession, getUser } from '../../lib/api';
 import { cn } from '../../lib/utils';
 import { useState } from 'react';
 
@@ -11,7 +11,7 @@ export function Navbar({ currentRole }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const handleLogout = () => {
-    removeUser();
+    clearAuthSession();
     navigate('/login');
   };
 

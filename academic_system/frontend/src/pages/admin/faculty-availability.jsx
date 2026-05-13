@@ -1,8 +1,8 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../../components/ui/card';
 import { Button } from '../../components/ui/button';
-import { Input, Label } from '../../components/ui/input';
+import { Label } from '../../components/ui/input';
 import {
   ArrowLeft,
   Clock,
@@ -14,9 +14,6 @@ import {
   Loader2,
   Info,
   History,
-  User,
-  BookOpen,
-  ChevronDown,
   X,
 } from 'lucide-react';
 import { adminAssignmentService } from '../../services/adminAssignment';
@@ -36,13 +33,9 @@ const TIME_SLOTS = [
   { slot: 10, time: '4:30 - 5:20' },
 ];
 
-// Helper to get slot number from slot object or number
-const getSlotNumber = (slot) => typeof slot === 'object' ? slot.slot : slot;
-
 export default function AdminFacultyAvailabilityPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const user = JSON.parse(localStorage.getItem('user') || '{}');
 
   // Get URL params for pre-selection
   const urlFacultyId = searchParams.get('faculty_id');
@@ -61,7 +54,6 @@ export default function AdminFacultyAvailabilityPage() {
   const [baseSlots, setBaseSlots] = useState([]);
   const [overrides, setOverrides] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [overrideLoading, setOverrideLoading] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
 
@@ -82,9 +74,7 @@ export default function AdminFacultyAvailabilityPage() {
         const facultyData = await adminService.getUsers({ role: 'faculty' });
         setAllFaculty(facultyData.users || []);
 
-        const subjectsData = await fetch(`${import.meta.env.VITE_API_URL || '/api/v1'}/admin/subjects`, {
-          headers: { 'Authorization': `Bearer ${localStorage.getItem('access_token')}` }
-        }).then(res => res.json());
+        const subjectsData = await adminService.getSubjects();
         setAllSubjects(subjectsData.subjects || []);
       } catch (err) {
         console.error('Failed to load reference data:', err);
@@ -137,32 +127,16 @@ export default function AdminFacultyAvailabilityPage() {
     fetchAvailabilityData();
   };
 
-  const toggleSlot = (day, slot) => {
-    const key = `${day}-${slot}`;
-    setOverrideData((prev) => {
-      const exists = prev.slots.some((s) => s.day === day && s.slot === slot);
-      if (exists) {
-        return {
-          ...prev,
-          slots: prev.slots.filter((s) => !(s.day === day && s.slot === slot)),
-        };
-      }
-      return {
-        ...prev,
-        slots: [...prev.slots, { day, slot, action: 'add' }],
-      };
-    });
-  };
-
   const handleSlotAction = (day, slot, action) => {
     setOverrideData((prev) => {
       const existingIndex = prev.slots.findIndex((s) => s.day === day && s.slot === slot);
       if (existingIndex >= 0) {
+        const existing = prev.slots[existingIndex];
         const updated = [...prev.slots];
-        if (action === 'remove') {
-          updated[existingIndex] = { day, slot, action };
-        } else {
+        if (existing.action === action) {
           updated.splice(existingIndex, 1);
+        } else {
+          updated[existingIndex] = { day, slot, action };
         }
         return { ...prev, slots: updated };
       }
@@ -226,24 +200,6 @@ export default function AdminFacultyAvailabilityPage() {
   const selectedFacultyDetails = allFaculty.find((f) => f.id === selectedFaculty);
   const selectedSubjectDetails = allSubjects.find((s) => s.id === selectedSubject);
 
-  // Compute slots added/removed by overrides for display
-  const overrideImpact = useMemo(() => {
-    const added = [];
-    const removed = [];
-
-    overrides.forEach((override) => {
-      override.slots.forEach((slot) => {
-        if (slot.action === 'add') {
-          added.push(slot);
-        } else if (slot.action === 'remove') {
-          removed.push(slot);
-        }
-      });
-    });
-
-    return { added, removed };
-  }, [overrides]);
-
   // Check if a slot is available in effective availability
   const isSlotAvailable = (day, slot) => {
     return effectiveSlots.some((s) => s.day === day && s.slot === slot);
@@ -267,6 +223,13 @@ export default function AdminFacultyAvailabilityPage() {
     }
     return null;
   };
+
+  const getPendingSlotAction = (day, slot) => {
+    return overrideData.slots.find((s) => s.day === day && s.slot === slot)?.action || null;
+  };
+
+  const selectedAddCount = overrideData.slots.filter((slot) => slot.action === 'add').length;
+  const selectedRemoveCount = overrideData.slots.filter((slot) => slot.action === 'remove').length;
 
   return (
     <div className="space-y-6">
@@ -429,7 +392,7 @@ export default function AdminFacultyAvailabilityPage() {
                       {selectedSubjectDetails.name}
                     </p>
                     <p className="text-xs text-gray-500 dark:text-gray-400">
-                      {selectedSubjectDetails.code} • {selectedSubjectDetails.credits} credits
+                      {selectedSubjectDetails.code} - {selectedSubjectDetails.credits} credits
                     </p>
                   </div>
                 </div>
@@ -551,8 +514,13 @@ export default function AdminFacultyAvailabilityPage() {
                     </div>
                   </div>
 
-                  <div className="space-y-2">
-                    <Label>Select Slots to Override</Label>
+                  <div className="space-y-3">
+                    <div>
+                      <Label>Select Slots to Override</Label>
+                      <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                        Click an available slot to make it unavailable. Click an unavailable slot to make it available. Click a selected slot again to undo.
+                      </p>
+                    </div>
                     <div className="border border-gray-200 dark:border-gray-800 rounded-lg p-4">
                       <div className="overflow-x-auto">
                         <table className="min-w-full">
@@ -560,8 +528,9 @@ export default function AdminFacultyAvailabilityPage() {
                             <tr className="border-b border-gray-200 dark:border-gray-800">
                               <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Day</th>
                               {TIME_SLOTS.map((slot) => (
-                                <th key={slot.slot} className="px-1 py-2 text-center text-xs font-medium text-gray-500 dark:text-gray-400">
-                                  {slot.time}
+                                <th key={slot.slot} className="min-w-[105px] px-1 py-2 text-center text-xs font-medium text-gray-500 dark:text-gray-400">
+                                  <span className="block">Slot {slot.slot}</span>
+                                  <span className="block font-normal">{slot.time}</span>
                                 </th>
                               ))}
                             </tr>
@@ -573,40 +542,54 @@ export default function AdminFacultyAvailabilityPage() {
                                   {day}
                                 </td>
                                 {TIME_SLOTS.map((slot) => {
-                                  const key = `${day}-${slot.slot}`;
-                                  const isSelected = overrideData.slots.some(
-                                    (s) => s.day === day && s.slot === slot.slot
-                                  );
+                                  const pendingAction = getPendingSlotAction(day, slot.slot);
+                                  const available = isSlotAvailable(day, slot.slot);
+                                  const inBase = isInBase(day, slot.slot);
                                   const overrideStatus = getSlotOverrideStatus(day, slot.slot);
+                                  const nextAction = available ? 'remove' : 'add';
 
+                                  let label = available ? 'Available' : 'Unavailable';
+                                  let detail = inBase ? 'Faculty choice' : 'No slot';
+                                  let cellClass = available
+                                    ? 'border-green-300 bg-green-100 text-green-800 hover:border-green-400 dark:border-green-800 dark:bg-green-900/30 dark:text-green-200'
+                                    : 'border-gray-200 bg-gray-100 text-gray-500 hover:border-gray-300 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-500';
+
+                                  if (overrideStatus?.action === 'add') {
+                                    detail = 'Existing override';
+                                    cellClass = 'border-blue-300 bg-blue-100 text-blue-800 hover:border-blue-400 dark:border-blue-800 dark:bg-blue-900/30 dark:text-blue-200';
+                                  } else if (overrideStatus?.action === 'remove') {
+                                    label = 'Unavailable';
+                                    detail = 'Existing override';
+                                    cellClass = 'border-red-300 bg-red-100 text-red-800 hover:border-red-400 dark:border-red-800 dark:bg-red-900/30 dark:text-red-200';
+                                  }
+
+                                  if (pendingAction === 'add') {
+                                    label = 'Make available';
+                                    detail = 'Selected';
+                                    cellClass = 'border-blue-600 bg-blue-600 text-white shadow-sm ring-2 ring-blue-200 dark:ring-blue-900';
+                                  } else if (pendingAction === 'remove') {
+                                    label = 'Make unavailable';
+                                    detail = 'Selected';
+                                    cellClass = 'border-red-600 bg-red-600 text-white shadow-sm ring-2 ring-red-200 dark:ring-red-900';
+                                  }
                                   return (
                                     <td key={slot.slot} className="px-1 py-1 text-center">
-                                      <div className="flex gap-0.5 justify-center">
-                                        <button
-                                          type="button"
-                                          onClick={() => handleSlotAction(day, slot.slot, 'add')}
-                                          className={`w-6 h-6 text-xs rounded transition-colors ${
-                                            isSelected && overrideData.slots.find((s) => s.day === day && s.slot === slot.slot)?.action === 'add'
-                                              ? 'bg-blue-500 text-white'
-                                              : 'bg-gray-100 dark:bg-gray-800 hover:bg-blue-50 dark:hover:bg-blue-900/20'
-                                          }`}
-                                          title="Add to availability"
-                                        >
-                                          +
-                                        </button>
-                                        <button
-                                          type="button"
-                                          onClick={() => handleSlotAction(day, slot.slot, 'remove')}
-                                          className={`w-6 h-6 text-xs rounded transition-colors ${
-                                            isSelected && overrideData.slots.find((s) => s.day === day && s.slot === slot.slot)?.action === 'remove'
-                                              ? 'bg-red-500 text-white'
-                                              : 'bg-gray-100 dark:bg-gray-800 hover:bg-red-50 dark:hover:bg-red-900/20'
-                                          }`}
-                                          title="Remove from availability"
-                                        >
-                                          −
-                                        </button>
-                                      </div>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleSlotAction(day, slot.slot, nextAction)}
+                                        className={`h-14 w-full rounded-lg border px-2 text-xs transition-all hover:scale-[1.02] focus:outline-none focus:ring-2 focus:ring-violet-500 ${cellClass}`}
+                                        title={pendingAction ? `Undo change: ${day} slot ${slot.slot}` : `${available ? 'Make unavailable' : 'Make available'}: ${day} slot ${slot.slot}`}
+                                      >
+                                        <span className="flex items-center justify-center gap-1 font-semibold">
+                                          {pendingAction === 'remove' || overrideStatus?.action === 'remove' ? (
+                                            <X className="h-3.5 w-3.5" />
+                                          ) : available || pendingAction === 'add' || overrideStatus?.action === 'add' ? (
+                                            <Check className="h-3.5 w-3.5" />
+                                          ) : null}
+                                          {label}
+                                        </span>
+                                        <span className="mt-0.5 block text-[10px] opacity-80">{detail}</span>
+                                      </button>
                                     </td>
                                   );
                                 })}
@@ -617,15 +600,14 @@ export default function AdminFacultyAvailabilityPage() {
                       </div>
                     </div>
                     <p className="text-xs text-gray-500 dark:text-gray-400">
-                      {overrideData.slots.length} slot(s) selected • + to add, − to remove
+                      {overrideData.slots.length} slot(s) selected - {selectedAddCount} make available, {selectedRemoveCount} make unavailable
                     </p>
                   </div>
 
                   <div className="flex items-start gap-2 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
                     <Info className="h-4 w-4 text-blue-600 dark:text-blue-400 mt-0.5 flex-shrink-0" />
                     <p className="text-xs text-blue-700 dark:text-blue-300">
-                      <strong>Add (+)</strong> forces the slot to be available even if faculty didn't select it.
-                      <strong>Remove (−)</strong> forces the slot to be unavailable even if faculty selected it.
+                      Available slots will be saved as unavailable overrides. Unavailable slots will be saved as available overrides.
                     </p>
                   </div>
 
@@ -666,7 +648,7 @@ export default function AdminFacultyAvailabilityPage() {
             <CardHeader>
               <CardTitle>Effective Availability</CardTitle>
               <CardDescription>
-                Faculty preferences combined with admin overrides • {effectiveSlots.length} slots available
+                Faculty preferences combined with admin overrides - {effectiveSlots.length} slots available
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -779,12 +761,12 @@ export default function AdminFacultyAvailabilityPage() {
                                     : 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400'
                                 }`}
                               >
-                                {slot.action === 'add' ? '+' : '-'} {slot.day}({slot.slot})
+                                {slot.action === 'add' ? 'Available' : 'Unavailable'} - {slot.day}({slot.slot})
                               </span>
                             ))}
                           </div>
                           <p className="text-xs text-gray-500 dark:text-gray-400">
-                            By {override.admin_name || 'Admin'} • {new Date(override.timestamp).toLocaleString()}
+                            By {override.admin_name || 'Admin'} - {new Date(override.timestamp).toLocaleString()}
                           </p>
                         </div>
                         {!override.applied && (

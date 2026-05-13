@@ -122,49 +122,37 @@ class FacultyAvailabilityService:
                 "Faculty is not assigned to this subject for the given semester/section"
             )
 
-        # Convert slot dicts to entities
-        available_slots = [
-            AvailableSlot(
-                day=DayOfWeek(slot["day"]),
-                slot=slot["slot"]
-            )
-            for slot in request.available_slots
-        ]
+        # Validate raw slot input before constructing domain entities so API
+        # callers receive a clean ValidationError instead of a raw ValueError.
+        available_slots = []
+        for slot in request.available_slots:
+            day = slot.get("day")
+            slot_number = slot.get("slot")
 
-        # Validate slot values
-        for slot in available_slots:
-            if not 1 <= slot.slot <= 10:
-                raise ValidationError(f"Slot must be between 1 and 10, got {slot.slot}")
+            try:
+                slot_number = int(slot_number)
+            except (TypeError, ValueError):
+                raise ValidationError(f"Slot must be an integer, got {slot_number}")
+
+            if not 1 <= slot_number <= 10:
+                raise ValidationError(f"Slot must be between 1 and 10, got {slot_number}")
+
+            try:
+                day_of_week = DayOfWeek(day)
+            except ValueError:
+                raise ValidationError(f"Invalid day of week: {day}")
+
+            available_slots.append(
+                AvailableSlot(
+                    day=day_of_week,
+                    slot=slot_number
+                )
+            )
 
         # Check for duplicates
         slot_keys = {(s.day.value, s.slot) for s in available_slots}
         if len(slot_keys) != len(available_slots):
             raise ValidationError("Duplicate slots detected")
-
-        # Check for slot conflicts with other faculty for the same semester/section
-        # (a slot can only be selected by one faculty per semester/section)
-        occupied_slots = await self.get_occupied_slots(
-            semester=request.semester,
-            section=request.section,
-            exclude_faculty_id=faculty_id
-        )
-
-        conflicts = []
-        for slot in available_slots:
-            slot_key = (slot.day.value, slot.slot)
-            if slot_key in occupied_slots:
-                # Find which faculty occupies this slot
-                occupant = occupied_slots[slot_key]
-                conflicts.append(
-                    f"{slot.day.value} slot {slot.slot} is already selected by {occupant}"
-                )
-
-        if conflicts:
-            raise ValidationError(
-                "The following slots are already selected by other faculty for "
-                f"semester {request.semester}, section {request.section}: " +
-                "; ".join(conflicts)
-            )
 
         # Find existing or create new
         existing = await self.availability_repo.find(
@@ -202,10 +190,10 @@ class FacultyAvailabilityService:
         exclude_faculty_id: Optional[str] = None
     ) -> dict:
         """
-        Get all slots already selected by faculty for a semester/section.
+        Get slots that appear in other faculty availability for a semester/section.
 
-        Returns a dict mapping (day, slot) -> faculty_name for quick lookup.
-        Each slot can only be selected by one faculty per semester/section.
+        This is informational only. Faculty availability is not a reservation;
+        the timetable generator resolves real scheduling conflicts later.
 
         Args:
             semester: Semester number

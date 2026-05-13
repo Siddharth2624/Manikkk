@@ -7,6 +7,7 @@ from datetime import datetime
 from motor.motor_asyncio import AsyncIOMotorDatabase, AsyncIOMotorClientSession
 
 from app.domain.entities.subject_assignment import SubjectAssignment
+from app.domain.entities.subject import Subject, SubjectType
 from app.domain.entities.user import User, UserRole
 from app.domain.exceptions import ValidationError, ResourceNotFoundError, AuthorizationError
 from app.domain.interfaces.repositories import ISubjectAssignmentRepository, ISubjectRepository, IUserRepository
@@ -43,6 +44,10 @@ class FacultyAssignmentService:
         self.subject_repo = subject_repo
         self.user_repo = user_repo
         self.db = db
+
+    def _subject_assignment_kind(self, subject: Subject) -> str:
+        """Group subject types by assignment limit category."""
+        return "lab" if subject.subject_type == SubjectType.LAB else "theory"
 
     async def assign_subject(
         self,
@@ -99,25 +104,34 @@ class FacultyAssignmentService:
                 f"semester {request.semester} section {request.section}"
             )
 
-        # CONSTRAINT: One faculty can teach only ONE subject per semester
-        # (but can teach that subject to both sections A and B)
+        # CONSTRAINT: One faculty can teach one theory-type subject and one lab
+        # subject per semester. The same subject can still be assigned to both
+        # sections A and B.
         semester_assignments = await self.assignment_repo.find_by_faculty_and_semester(
             faculty_id=request.faculty_id,
             semester=request.semester
         )
 
-        # Check if faculty has any other subject assigned in this semester
+        requested_kind = self._subject_assignment_kind(subject)
+
         for assignment in semester_assignments:
-            if assignment.subject_id != request.subject_id:
-                # Get the other subject's name for better error message
-                other_subject = await self.subject_repo.find_by_id(assignment.subject_id)
-                other_subject_name = other_subject.name if other_subject else "Unknown"
+            if assignment.subject_id == request.subject_id:
+                continue
+
+            other_subject = await self.subject_repo.find_by_id(assignment.subject_id)
+            if not other_subject:
+                continue
+
+            existing_kind = self._subject_assignment_kind(other_subject)
+            if existing_kind == requested_kind:
+                kind_label = "lab" if requested_kind == "lab" else "theory"
                 raise ValidationError(
-                    f"Faculty can only teach ONE subject per semester. "
-                    f"{faculty.full_name} is already assigned to '{other_subject_name}' "
-                    f"in semester {request.semester}. "
-                    f"They can teach '{other_subject_name}' to both sections A and B, "
-                    f"but cannot be assigned to a different subject in the same semester."
+                    f"Faculty can teach only one {kind_label} subject per semester. "
+                    f"{faculty.full_name} is already assigned to "
+                    f"'{other_subject.name}' ({other_subject.code}) in semester "
+                    f"{request.semester}. They can also be assigned one "
+                    f"{'theory' if requested_kind == 'lab' else 'lab'} subject, "
+                    f"but not another {kind_label} subject in the same semester."
                 )
 
         # Use transaction for atomicity

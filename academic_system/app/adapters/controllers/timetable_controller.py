@@ -105,6 +105,33 @@ async def get_timetable_use_case(
     )
 
 
+def _generation_conflict_response(
+    timetable_use_case: TimetableUseCase,
+    error: ValueError,
+    semester: int,
+    section: str
+) -> Optional[JSONResponse]:
+    """Return a structured generation-conflict response when the generator provides details."""
+    generator = getattr(timetable_use_case, "timetable_generator", None)
+    conflicts = getattr(generator, "last_conflicts", None)
+
+    if not conflicts:
+        return None
+
+    return JSONResponse(
+        status_code=400,
+        content={
+            "status": "generation_conflict",
+            "message": "Timetable generation is blocked by one or more scheduling conflicts.",
+            "summary": f"{len(conflicts)} issue(s) must be resolved before the timetable can be generated.",
+            "semester": semester,
+            "section": section,
+            "conflicts": conflicts,
+            "raw_error": str(error),
+        }
+    )
+
+
 @router.post("/generate")
 async def generate_timetable(
     request: GenerateTimetableRequest,
@@ -157,6 +184,15 @@ async def generate_timetable(
             "warnings": response.warnings
         }
     except ValueError as e:
+        conflict_response = _generation_conflict_response(
+            timetable_use_case,
+            e,
+            request.semester,
+            request.section
+        )
+        if conflict_response:
+            return conflict_response
+
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e)
@@ -207,6 +243,15 @@ async def generate_timetable_simple(
             }
         )
     except ValueError as e:
+        conflict_response = _generation_conflict_response(
+            timetable_use_case,
+            e,
+            request.semester,
+            request.section
+        )
+        if conflict_response:
+            return conflict_response
+
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e)
@@ -728,6 +773,8 @@ def _format_warnings(warnings) -> Dict[str, Any]:
                 "time_range": w.time_range,
                 "competing_subjects": w.competing_subjects,
                 "competing_faculty": w.competing_faculty,
+                "competing_subject_names": getattr(w, "competing_subject_names", []),
+                "competing_faculty_names": getattr(w, "competing_faculty_names", []),
                 "supply_demand_ratio": w.supply_demand_ratio,
                 "risk_level": w.risk_level.value,
                 "message": w.message

@@ -44,6 +44,11 @@ class AttendanceReportRequest:
 class AttendanceUseCase:
     """Use case for attendance operations."""
 
+    ALLOWED_MARKING_STATUSES = {
+        AttendanceStatus.PRESENT.value,
+        AttendanceStatus.ABSENT.value,
+    }
+
     def __init__(
         self,
         attendance_repository: IAttendanceRepository,
@@ -95,6 +100,23 @@ class AttendanceUseCase:
         # Validate attendance list is not empty
         if not request.attendance or not isinstance(request.attendance, list):
             raise ValidationError("Attendance list cannot be empty", field="attendance")
+
+        for index, item in enumerate(request.attendance):
+            if not isinstance(item, dict):
+                raise ValidationError(
+                    "Each attendance item must be an object",
+                    field=f"attendance[{index}]"
+                )
+            if not item.get("student_id"):
+                raise ValidationError(
+                    "Student ID is required",
+                    field=f"attendance[{index}].student_id"
+                )
+            if item.get("status") not in self.ALLOWED_MARKING_STATUSES:
+                raise ValidationError(
+                    "Attendance status must be either 'present' or 'absent'",
+                    field=f"attendance[{index}].status"
+                )
 
         # Role check: ONLY FACULTY can mark attendance
         if not ctx.is_faculty():
@@ -177,7 +199,52 @@ class AttendanceUseCase:
                 student_id=student_id,
                 subject_id=subject_id
             )
-            return [summary] if summary else []
+            if summary:
+                return [summary]
+
+            return [
+                AttendanceSummary(
+                    student_id=student_id,
+                    subject_id=subject_id,
+                    total_classes=0,
+                    present_count=0,
+                    absent_count=0,
+                    excused_count=0,
+                    percentage=0.0,
+                    is_below_threshold=False
+                )
+            ]
+
+        if ctx.is_student() and ctx.semester and ctx.section:
+            assignments = await self.subject_assignment_repository.find_by_semester_and_section(
+                semester=ctx.semester,
+                section=ctx.section
+            )
+            subject_ids = []
+            for assignment in assignments:
+                if assignment.subject_id not in subject_ids:
+                    subject_ids.append(assignment.subject_id)
+
+            if subject_ids:
+                summaries = []
+                for assigned_subject_id in subject_ids:
+                    summary = await self.attendance_repository.get_summary(
+                        student_id=student_id,
+                        subject_id=assigned_subject_id
+                    )
+                    summaries.append(
+                        summary or AttendanceSummary(
+                            student_id=student_id,
+                            subject_id=assigned_subject_id,
+                            total_classes=0,
+                            present_count=0,
+                            absent_count=0,
+                            excused_count=0,
+                            percentage=0.0,
+                            is_below_threshold=False
+                        )
+                    )
+                return summaries
 
         return await self.attendance_repository.get_all_summaries(student_id)
 
@@ -223,14 +290,20 @@ class AttendanceUseCase:
         if not subject:
             raise ResourceNotFoundError("Subject", request.subject_id)
 
-        # Get students in the section using request parameters
+        # Get every student in the section, even if they do not have attendance
+        # records yet. Reports should show the whole class roster.
         students = await self.user_repository.find_all(
+            role=UserRole.STUDENT,
             semester=request.semester,
-            section=request.section
+            section=request.section,
+            limit=1000
         )
+        if request.student_id:
+            students = [student for student in students if student.id == request.student_id]
 
         # Build attendance data
         attendance_data = []
+        flat_students = []
         for student in students:
             start = request.start_date or date.today().replace(month=1, day=1)
             end = request.end_date or date.today()
@@ -248,21 +321,46 @@ class AttendanceUseCase:
                     subject_id=request.subject_id,
                     records=records
                 )
-                attendance_data.append({
-                    "student": {
-                        "id": student.id,
-                        "name": student.full_name,
-                        "roll_number": student.roll_number
-                    },
-                    "summary": {
-                        "total": summary.total_classes,
-                        "present": summary.present_count,
-                        "absent": summary.absent_count,
-                        "excused": summary.excused_count,
-                        "percentage": summary.percentage,
-                        "is_below_threshold": summary.is_below_threshold
-                    }
-                })
+            else:
+                summary = AttendanceSummary(
+                    student_id=student.id,
+                    subject_id=request.subject_id,
+                    total_classes=0,
+                    present_count=0,
+                    absent_count=0,
+                    excused_count=0,
+                    percentage=0.0,
+                    is_below_threshold=False
+                )
+
+            nested_row = {
+                "student": {
+                    "id": student.id,
+                    "name": student.full_name,
+                    "roll_number": student.roll_number
+                },
+                "summary": {
+                    "total": summary.total_classes,
+                    "present": summary.present_count,
+                    "absent": summary.absent_count,
+                    "excused": summary.excused_count,
+                    "percentage": summary.percentage,
+                    "is_below_threshold": summary.is_below_threshold
+                }
+            }
+            flat_row = {
+                "student_id": student.id,
+                "student_name": student.full_name,
+                "roll_number": student.roll_number,
+                "total_classes": summary.total_classes,
+                "present": summary.present_count,
+                "absent": summary.absent_count,
+                "excused": summary.excused_count,
+                "percentage": summary.percentage,
+                "is_below_threshold": summary.is_below_threshold
+            }
+            attendance_data.append(nested_row)
+            flat_students.append(flat_row)
 
         return {
             "subject": {
@@ -271,6 +369,7 @@ class AttendanceUseCase:
                 "code": subject.code
             },
             "attendance": attendance_data,
+            "students": flat_students,
             "date_range": {
                 "start": request.start_date.isoformat() if request.start_date else None,
                 "end": request.end_date.isoformat() if request.end_date else None

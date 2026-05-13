@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Check } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
@@ -53,12 +54,10 @@ export function SlotGrid({
   days = DAYS,
   slots = TIME_SLOTS,
   className,
-  bookedSlots = [], // Slots already booked by other subjects
 }) {
   const [focusedSlot, setFocusedSlot] = useState(null);
 
   const slotSet = useMemo(() => new Set(availableSlots), [availableSlots]);
-  const bookedSet = useMemo(() => new Set(bookedSlots), [bookedSlots]);
 
   // Helper to get slot number from slot object or number
   const getSlotNum = useCallback((slot) => {
@@ -76,9 +75,6 @@ export function SlotGrid({
   }, [getSlotNum]);
 
   const isAvailable = useCallback((day, slot) => slotSet.has(getSlotKey(day, slot)), [slotSet, getSlotKey]);
-
-  // Check if slot is already booked by another subject
-  const isBooked = useCallback((day, slot) => bookedSet.has(getSlotKey(day, slot)), [bookedSet, getSlotKey]);
 
   const handleToggle = useCallback(
     (day, slot) => {
@@ -151,8 +147,6 @@ export function SlotGrid({
                 </td>
                 {slots.map((slot, slotIndex) => {
                   const available = isAvailable(day, slot);
-                  const booked = isBooked(day, slot);
-                  const slotKey = getSlotKey(day, slot);
                   const slotNum = getSlotNum(slot);
                   const isFocused = focusedSlot?.dayIndex === dayIndex && focusedSlot?.slotIndex === slotIndex;
 
@@ -162,28 +156,28 @@ export function SlotGrid({
                         type="button"
                         role="gridcell"
                         aria-pressed={available}
-                        aria-label={`${day} slot ${slotNum} ${booked ? 'booked by another subject' : available ? 'available' : 'unavailable'}`}
+                        aria-label={`${day} slot ${slotNum} ${available ? 'available' : 'unavailable'}`}
                         tabIndex={isFocused ? 0 : -1}
                         onFocus={() => setFocusedSlot({ dayIndex, slotIndex })}
                         onClick={() => handleToggle(day, slot)}
                         onKeyDown={(e) => handleKeyDown(e, dayIndex, slotIndex)}
-                        disabled={readonly || booked}
+                        disabled={readonly}
                         className={cn(
                           'w-full h-10 rounded-md transition-all duration-150 text-xs font-medium',
                           'focus:outline-none focus:ring-2 focus:ring-violet-500 focus:ring-offset-2',
-                          booked
-                            ? 'bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400 cursor-not-allowed'
-                            : available
-                              ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400'
-                              : 'bg-gray-100 dark:bg-gray-800 text-gray-400 dark:text-gray-600',
+                          available
+                            ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400'
+                            : 'bg-gray-100 dark:bg-gray-800 text-gray-400 dark:text-gray-600',
                           readonly
                             ? 'cursor-not-allowed opacity-60'
-                            : booked
-                              ? 'cursor-not-allowed'
-                              : 'cursor-pointer hover:scale-105 active:scale-95'
+                            : 'cursor-pointer hover:scale-105 active:scale-95'
                         )}
                       >
-                        {booked ? '📅' : available ? '✓' : '-'}
+                        {available ? (
+                          <Check className="mx-auto h-4 w-4" aria-hidden="true" />
+                        ) : (
+                          '-'
+                        )}
                       </button>
                     </td>
                   );

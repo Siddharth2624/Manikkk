@@ -8,6 +8,7 @@ Provides endpoints for:
 
 import logging
 from typing import List, Optional
+from bson import ObjectId
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 
 logger = logging.getLogger(__name__)
@@ -142,14 +143,84 @@ async def get_faculty_availability_service(
 
 async def get_admin_override_service(
     override_repo: IAdminOverrideRepository = Depends(get_admin_override_repository),
+    availability_repo: IFacultyAvailabilityRepository = Depends(get_faculty_availability_repository),
     assignment_repo: ISubjectAssignmentRepository = Depends(get_subject_assignment_repository),
-    user_repo: IUserRepository = Depends(get_user_repository)
+    user_repo: IUserRepository = Depends(get_user_repository),
+    db: AsyncIOMotorDatabase = Depends(get_database)
 ) -> AdminOverrideService:
     """Dependency to get admin override service."""
     return AdminOverrideService(
         override_repo=override_repo,
+        availability_repo=availability_repo,
         assignment_repo=assignment_repo,
-        user_repo=user_repo
+        user_repo=user_repo,
+        db=db
+    )
+
+
+async def _build_assignment_response(
+    assignment,
+    subject_repo: ISubjectRepository,
+    user_repo: IUserRepository
+) -> FacultyAssignmentResponse:
+    """Build a frontend-friendly assignment response with display names."""
+    subject = await subject_repo.find_by_id(assignment.subject_id)
+    faculty = await user_repo.find_by_id(assignment.faculty_id)
+
+    return FacultyAssignmentResponse(
+        id=assignment.id,
+        faculty_id=assignment.faculty_id,
+        faculty_name=faculty.full_name if faculty else "",
+        faculty_email=faculty.email if faculty else "",
+        subject_id=assignment.subject_id,
+        subject_name=subject.name if subject else "",
+        subject_code=subject.code if subject else "",
+        semester=assignment.semester,
+        section=assignment.section,
+        created_at=assignment.created_at
+    )
+
+
+def _build_effective_availability_response(
+    response: ServiceEffectiveAvailabilityResponse
+) -> EffectiveAvailabilityResponse:
+    """Convert service effective availability into API response DTO."""
+    persistent_overrides = []
+    one_time_overrides = []
+
+    for override in response.applied_overrides:
+        slots = [
+            OverrideSlotDTO(
+                day=DayOfWeekEnum(s["day"]),
+                slot=s["slot"],
+                action=OverrideActionEnum(s["action"])
+            )
+            for s in override["slots"]
+        ]
+        detail = OverrideDetail(
+            id=override["id"],
+            override_type=override["type"],
+            slots=slots,
+            admin_id=override["admin_id"],
+            timestamp=override["timestamp"],
+            applied=override.get("applied", False)
+        )
+        if override["type"] == "persistent":
+            persistent_overrides.append(detail)
+        else:
+            one_time_overrides.append(detail)
+
+    return EffectiveAvailabilityResponse(
+        base_slots=[
+            SlotDTO(day=DayOfWeekEnum(slot.day.value), slot=slot.slot)
+            for slot in response.base_slots
+        ],
+        effective_slots=[
+            SlotDTO(day=DayOfWeekEnum(slot.day.value), slot=slot.slot)
+            for slot in response.effective_slots
+        ],
+        persistent_overrides=persistent_overrides,
+        one_time_overrides=one_time_overrides
     )
 
 
@@ -164,6 +235,11 @@ async def get_admin_override_service(
     summary="Assign a subject to a faculty member",
     description="Creates a new assignment linking a faculty member to a subject for a specific semester and section."
 )
+@router.post(
+    "/subject-assignments",
+    response_model=AssignmentResponse,
+    include_in_schema=False
+)
 async def assign_subject(
     request: AssignSubjectRequest,
     current_admin: User = Depends(get_current_admin),
@@ -171,14 +247,16 @@ async def assign_subject(
 ):
     """Assign a subject to a faculty member (admin only)."""
     try:
-        assignment = await service.assign_subject(
+        response = await service.assign_subject(
             ServiceAssignSubjectRequest(
                 faculty_id=request.faculty_id,
                 subject_id=request.subject_id,
                 semester=request.semester,
                 section=request.section
-            )
+            ),
+            current_admin
         )
+        assignment = response.assignment
 
         return AssignmentResponse(
             id=assignment.id,
@@ -194,6 +272,11 @@ async def assign_subject(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e)
         )
+    except AuthorizationError as e:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(e)
+        )
     except ResourceNotFoundError as e:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -206,6 +289,10 @@ async def assign_subject(
     summary="Delete a subject assignment",
     description="Removes an assignment linking a faculty member to a subject."
 )
+@router.delete(
+    "/subject-assignments/{assignment_id}",
+    include_in_schema=False
+)
 async def delete_assignment(
     assignment_id: str,
     current_admin: User = Depends(get_current_admin),
@@ -213,7 +300,7 @@ async def delete_assignment(
 ):
     """Delete a subject assignment (admin only)."""
     try:
-        result = await service.delete_assignment(assignment_id)
+        result = await service.remove_assignment(assignment_id, current_admin)
         if not result:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -221,6 +308,11 @@ async def delete_assignment(
             )
         return {"message": "Assignment deleted successfully"}
 
+    except AuthorizationError as e:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(e)
+        )
     except ResourceNotFoundError as e:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -233,6 +325,11 @@ async def delete_assignment(
     response_model=List[FacultyAssignmentResponse],
     summary="Get all subject assignments",
     description="Retrieves all subject assignments with optional filters for faculty, subject, semester, or section."
+)
+@router.get(
+    "/subject-assignments",
+    response_model=List[FacultyAssignmentResponse],
+    include_in_schema=False
 )
 async def get_assignments(
     faculty_id: Optional[str] = Query(None, description="Filter by faculty ID"),
@@ -251,20 +348,16 @@ async def get_assignments(
             section=section
         )
 
-        return [
-            FacultyAssignmentResponse(
-                id=a.id,
-                faculty_id=a.faculty_id,
-                faculty_name=a.faculty_name,
-                subject_id=a.subject_id,
-                subject_name=a.subject_name,
-                subject_code=a.subject_code,
-                semester=a.semester,
-                section=a.section,
-                created_at=a.created_at
+        result = []
+        for assignment in assignments:
+            result.append(
+                await _build_assignment_response(
+                    assignment,
+                    service.subject_repo,
+                    service.user_repo
+                )
             )
-            for a in assignments
-        ]
+        return result
 
     except ValidationError as e:
         raise HTTPException(
@@ -288,20 +381,16 @@ async def get_faculty_subjects(
     try:
         assignments = await service.find_assignments(faculty_id=faculty_id)
 
-        return [
-            FacultyAssignmentResponse(
-                id=a.id,
-                faculty_id=a.faculty_id,
-                faculty_name=a.faculty_name,
-                subject_id=a.subject_id,
-                subject_name=a.subject_name,
-                subject_code=a.subject_code,
-                semester=a.semester,
-                section=a.section,
-                created_at=a.created_at
+        result = []
+        for assignment in assignments:
+            result.append(
+                await _build_assignment_response(
+                    assignment,
+                    service.subject_repo,
+                    service.user_repo
+                )
             )
-            for a in assignments
-        ]
+        return result
 
     except ResourceNotFoundError as e:
         raise HTTPException(
@@ -325,20 +414,16 @@ async def get_subject_faculty(
     try:
         assignments = await service.find_assignments(subject_id=subject_id)
 
-        return [
-            FacultyAssignmentResponse(
-                id=a.id,
-                faculty_id=a.faculty_id,
-                faculty_name=a.faculty_name,
-                subject_id=a.subject_id,
-                subject_name=a.subject_name,
-                subject_code=a.subject_code,
-                semester=a.semester,
-                section=a.section,
-                created_at=a.created_at
+        result = []
+        for assignment in assignments:
+            result.append(
+                await _build_assignment_response(
+                    assignment,
+                    service.subject_repo,
+                    service.user_repo
+                )
             )
-            for a in assignments
-        ]
+        return result
 
     except ResourceNotFoundError as e:
         raise HTTPException(
@@ -387,6 +472,44 @@ async def get_faculty_availability_admin(
     except ValidationError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+
+
+@router.get(
+    "/faculty-availability/effective",
+    response_model=EffectiveAvailabilityResponse,
+    summary="Get effective faculty availability",
+    description="Get base availability plus admin overrides for a faculty assignment."
+)
+async def get_faculty_effective_availability_admin(
+    faculty_id: str = Query(..., description="Faculty ID"),
+    subject_id: str = Query(..., description="Subject ID"),
+    semester: int = Query(..., ge=1, le=8, description="Semester"),
+    section: str = Query(..., min_length=1, max_length=2, description="Section"),
+    current_admin: User = Depends(get_current_admin),
+    service: FacultyAvailabilityService = Depends(get_faculty_availability_service)
+):
+    """Get effective availability including base slots and admin overrides."""
+    try:
+        response = await service.get_effective_availability(
+            faculty_id=faculty_id,
+            subject_id=subject_id,
+            semester=semester,
+            section=section,
+            requesting_user=current_admin
+        )
+
+        return _build_effective_availability_response(response)
+
+    except ValidationError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    except AuthorizationError as e:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
             detail=str(e)
         )
 
@@ -460,7 +583,7 @@ async def create_override(
 ):
     """Create an admin override (admin only)."""
     try:
-        override = await service.create_override(
+        response = await service.create_override(
             ServiceCreateOverrideRequest(
                 faculty_id=request.faculty_id,
                 subject_id=request.subject_id,
@@ -469,8 +592,10 @@ async def create_override(
                 override_type=request.override_type,
                 slots=[slot.model_dump() for slot in request.slots]
             ),
-            current_admin.id
+            current_admin.id,
+            current_admin
         )
+        override = response.override
 
         return OverrideResponse(
             id=override.id,
@@ -492,6 +617,11 @@ async def create_override(
             applied=override.applied
         )
 
+    except AuthorizationError as e:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(e)
+        )
     except ValidationError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -514,41 +644,56 @@ async def get_overrides(
     faculty_id: Optional[str] = Query(None, description="Filter by faculty ID"),
     subject_id: Optional[str] = Query(None, description="Filter by subject ID"),
     current_admin: User = Depends(get_current_admin),
-    service: AdminOverrideService = Depends(get_admin_override_service)
+    service: AdminOverrideService = Depends(get_admin_override_service),
+    user_repo: IUserRepository = Depends(get_user_repository),
+    subject_repo: ISubjectRepository = Depends(get_subject_repository)
 ):
     """Get all admin overrides (admin only)."""
     try:
-        overrides = await service.find_audit_log(
+        audit_log = await service.get_audit_log(
             faculty_id=faculty_id,
-            subject_id=subject_id
+            subject_id=subject_id,
+            current_user=current_admin
         )
 
-        return [
-            OverrideLogResponse(
-                id=o.id,
-                faculty_id=o.faculty_id,
-                faculty_name=o.faculty_name,
-                subject_id=o.subject_id,
-                subject_name=o.subject_name,
-                semester=o.semester,
-                section=o.section,
-                override_type=o.override_type.value,
-                slots=[
-                    OverrideSlotDTO(
-                        day=DayOfWeekEnum(slot.day.value),
-                        slot=slot.slot,
-                        action=OverrideActionEnum(slot.action.value)
-                    )
-                    for slot in o.slots
-                ],
-                admin_id=o.admin_id,
-                admin_name=o.admin_name,
-                timestamp=o.timestamp,
-                applied=o.applied
-            )
-            for o in overrides
-        ]
+        result = []
+        for override in audit_log.overrides:
+            faculty = await user_repo.find_by_id(override.faculty_id)
+            admin = await user_repo.find_by_id(override.admin_id)
+            subject = await subject_repo.find_by_id(override.subject_id)
 
+            result.append(
+                OverrideLogResponse(
+                    id=override.id,
+                    faculty_id=override.faculty_id,
+                    faculty_name=faculty.full_name if faculty else "",
+                    subject_id=override.subject_id,
+                    subject_name=subject.name if subject else "",
+                    semester=override.semester,
+                    section=override.section,
+                    override_type=override.override_type.value,
+                    slots=[
+                        OverrideSlotDTO(
+                            day=DayOfWeekEnum(slot.day.value),
+                            slot=slot.slot,
+                            action=OverrideActionEnum(slot.action.value)
+                        )
+                        for slot in override.slots
+                    ],
+                    admin_id=override.admin_id,
+                    admin_name=admin.full_name if admin else "",
+                    timestamp=override.timestamp,
+                    applied=override.applied
+                )
+            )
+
+        return result
+
+    except AuthorizationError as e:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(e)
+        )
     except ValidationError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -568,7 +713,7 @@ async def delete_override(
 ):
     """Delete an admin override (admin only)."""
     try:
-        result = await service.delete_override(override_id)
+        result = await service.delete_override(override_id, current_admin)
         if not result:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -576,6 +721,11 @@ async def delete_override(
             )
         return {"message": "Override deleted successfully"}
 
+    except AuthorizationError as e:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(e)
+        )
     except ResourceNotFoundError as e:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -630,9 +780,10 @@ async def get_my_subjects(
             result.append(
                 MySubjectResponse(
                     subject=SubjectInfo(
-                        _id=a.subject_id,
+                        id=a.subject_id,
                         code=subject.code if subject else "",
-                        name=subject.name if subject else "Unknown"
+                        name=subject.name if subject else "Unknown",
+                        credits=subject.credits if subject else 3
                     ),
                     semester=a.semester,
                     section=a.section,
@@ -664,6 +815,12 @@ async def get_faculty_availability(
 ):
     """Get faculty's availability for a subject (including admin overrides)."""
     try:
+        if not ObjectId.is_valid(subject_id):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid subject_id"
+            )
+
         # Get EFFECTIVE availability (base + overrides)
         effective_response = await service.get_effective_availability(
             faculty_id=current_faculty.id,
@@ -810,8 +967,8 @@ async def get_my_effective_availability(
 
 @faculty_router.get(
     "/availability/occupied",
-    summary="Get occupied slots for semester/section",
-    description="Get all slots already selected by other faculty for this semester and section. Used to prevent duplicate slot selection."
+    summary="Get overlapping faculty availability for semester/section",
+    description="Get slots also marked available by other faculty. Informational only; availability is not a reservation."
 )
 async def get_occupied_slots(
     semester: int = Query(..., ge=1, le=8, description="Semester"),
@@ -819,7 +976,7 @@ async def get_occupied_slots(
     current_faculty: User = Depends(get_current_faculty),
     service: FacultyAvailabilityService = Depends(get_faculty_availability_service)
 ):
-    """Get slots already occupied by other faculty for this semester/section."""
+    """Get slots also marked available by other faculty for this semester/section."""
     try:
         occupied = await service.get_occupied_slots(
             semester=semester,

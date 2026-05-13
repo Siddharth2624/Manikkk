@@ -1,11 +1,11 @@
 """Admin controller - FastAPI routes."""
 
-from typing import List
+from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from bson import ObjectId
 
 from app.domain.entities.user import User, UserRole
+from app.domain.entities.subject import SubjectType
 from app.infrastructure.config import Settings, settings
 from app.domain.interfaces.repositories import IUserRepository, ISubjectRepository
 from app.adapters.repositories import UserRepository, SubjectRepository
@@ -41,13 +41,9 @@ class SubjectCreateRequest(BaseModel):
     code: str
     name: str
     semester: int
-    sections: List[str]
-    faculty_id: str
-    subject_type: str
-    credits: int
-    classes_per_week: int
-    description: str = None
-    syllabus: str = None
+    subject_type: SubjectType
+    credits: Optional[int] = None
+    classes_per_week: Optional[int] = None
 
 
 async def get_user_repository(
@@ -275,11 +271,12 @@ async def get_statistics(
 @router.get("/subjects")
 async def list_subjects(
     semester: int = None,
+    subject_type: SubjectType = None,
     current_admin: User = Depends(get_current_admin),
     subject_repo: ISubjectRepository = Depends(get_subject_repository)
 ):
     """List all subjects (admin only)."""
-    subjects = await subject_repo.find_all()
+    subjects = await subject_repo.find_all(semester=semester, subject_type=subject_type, limit=100)
     return {
         "subjects": [
             {
@@ -306,26 +303,49 @@ async def create_subject(
     try:
         from app.domain.entities.subject import Subject
 
+        if not request.code.strip() or not request.name.strip():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Subject code and name are required"
+            )
+
+        existing = await subject_repo.find_by_code(request.code)
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Subject code {request.code.upper()} already exists"
+            )
+
+        if request.subject_type == SubjectType.LAB:
+            credits = 2
+            classes_per_week = 2
+        else:
+            credits = request.credits or 3
+            classes_per_week = request.classes_per_week or credits
+
         subject = Subject(
-            id=str(ObjectId()),
-            code=request.code,
-            name=request.name,
+            id="",
+            code=request.code.strip().upper(),
+            name=request.name.strip(),
             semester=request.semester,
-            sections=request.sections,
             subject_type=request.subject_type,
-            credits=request.credits,
-            classes_per_week=request.classes_per_week,
-            description=request.description,
-            syllabus=request.syllabus
+            credits=credits,
+            classes_per_week=classes_per_week
         )
 
-        await subject_repo.create(subject)
+        subject = await subject_repo.save(subject)
         return {
             "id": subject.id,
             "code": subject.code,
             "name": subject.name,
+            "semester": subject.semester,
+            "subject_type": subject.subject_type.value,
+            "credits": subject.credits,
+            "classes_per_week": subject.classes_per_week,
             "message": "Subject created successfully"
         }
+    except HTTPException:
+        raise
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

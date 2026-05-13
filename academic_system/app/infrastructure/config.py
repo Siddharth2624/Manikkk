@@ -2,9 +2,9 @@
 
 import json
 from dataclasses import dataclass
-from typing import List
+from typing import Annotated, List
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 @dataclass
@@ -57,14 +57,14 @@ class Settings(BaseSettings):
     jwt_refresh_enabled: bool = Field(default=True, description="Enable refresh tokens")
 
     # CORS
-    cors_origins: List[str] = Field(
+    cors_origins: Annotated[List[str], NoDecode] = Field(
         default=["http://localhost:3000", "http://localhost:8000"],
         description="Allowed CORS origins"
     )
 
     # File Upload
     max_upload_size: int = Field(default=10485760, description="Max upload size in bytes (10MB)")
-    allowed_file_extensions: List[str] = Field(
+    allowed_file_extensions: Annotated[List[str], NoDecode] = Field(
         default=[".pdf", ".doc", ".docx", ".ppt", ".pptx", ".zip", ".rar"],
         description="Allowed file extensions"
     )

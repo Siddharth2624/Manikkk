@@ -5,10 +5,33 @@ import { AlertTriangle, Clock, Users, BookOpen } from 'lucide-react';
  * Simple slot-wise conflict display
  * Shows which faculties and subjects are conflicting for each time slot
  */
-export function ConflictReport({ warnings, onDismiss }) {
+export function ConflictReport({ warnings, assignments = [], onDismiss }) {
   if (!warnings || (!warnings.local?.length && !warnings.global?.length)) {
     return null;
   }
+
+  const facultyNameById = new Map();
+  const subjectLabelById = new Map();
+
+  assignments.forEach((assignment) => {
+    if (assignment.faculty_id && assignment.faculty_name) {
+      facultyNameById.set(assignment.faculty_id, assignment.faculty_name);
+    }
+    if (assignment.subject_id) {
+      const subjectLabel = assignment.subject_code
+        ? `${assignment.subject_code} - ${assignment.subject_name || 'Subject'}`
+        : assignment.subject_name;
+      if (subjectLabel) {
+        subjectLabelById.set(assignment.subject_id, subjectLabel);
+      }
+    }
+  });
+
+  const facultyLabel = (facultyIdOrName) =>
+    facultyNameById.get(facultyIdOrName) || facultyIdOrName;
+
+  const subjectLabel = (subjectIdOrName) =>
+    subjectLabelById.get(subjectIdOrName) || subjectIdOrName;
 
   // Group conflicts by slot
   const conflictsBySlot = {};
@@ -19,8 +42,8 @@ export function ConflictReport({ warnings, onDismiss }) {
     if (!conflictsBySlot['General']) {
       conflictsBySlot['General'] = { faculties: new Set(), subjects: new Set() };
     }
-    conflictsBySlot['General'].faculties.add(warning.faculty_name);
-    conflictsBySlot['General'].subjects.add(`${warning.subject_name} (${warning.subject_id})`);
+    conflictsBySlot['General'].faculties.add(warning.faculty_name || facultyLabel(warning.faculty_id));
+    conflictsBySlot['General'].subjects.add(subjectLabel(warning.subject_id) || warning.subject_name);
   });
 
   // Process global warnings (slot-specific conflicts)
@@ -30,8 +53,16 @@ export function ConflictReport({ warnings, onDismiss }) {
       conflictsBySlot[slotKey] = { faculties: new Set(), subjects: new Set(), competing_faculty: [] };
     }
     // Store competing faculty and subjects for this slot
-    conflictsBySlot[slotKey].faculties = new Set(warning.competing_faculty || []);
-    conflictsBySlot[slotKey].subjects = new Set(warning.competing_subjects || []);
+    conflictsBySlot[slotKey].faculties = new Set(
+      warning.competing_faculty_names?.length
+        ? warning.competing_faculty_names
+        : (warning.competing_faculty || []).map(facultyLabel)
+    );
+    conflictsBySlot[slotKey].subjects = new Set(
+      warning.competing_subject_names?.length
+        ? warning.competing_subject_names
+        : (warning.competing_subjects || []).map(subjectLabel)
+    );
   });
 
   return (
@@ -39,10 +70,10 @@ export function ConflictReport({ warnings, onDismiss }) {
       <CardHeader className="border-b bg-rose-100/50 dark:bg-rose-900/30">
         <CardTitle className="flex items-center gap-3 text-rose-800 dark:text-rose-300">
           <AlertTriangle className="h-6 w-6" />
-          <span>Slot Conflicts Detected</span>
+          <span>Scheduling Risks Detected</span>
         </CardTitle>
         <p className="text-sm text-rose-700 dark:text-rose-400 mt-1">
-          Cannot generate timetable due to the following conflicts:
+          These slots are highly contested. They may block generation unless availability is diversified.
         </p>
       </CardHeader>
 

@@ -11,7 +11,6 @@ export function SubjectCard({
   onSave,
   readonly = false,
   minSlotsOverride,
-  bookedSlots = [], // Slots already booked by other subjects
 }) {
   const [expanded, setExpanded] = useState(false);
   const [availableSlots, setAvailableSlots] = useState([]);
@@ -22,7 +21,9 @@ export function SubjectCard({
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(false);
 
-  const minSlots = minSlotsOverride ?? subject.credits;
+  const subjectId = subject?.id || subject?._id;
+  const subjectCredits = subject?.credits || 3;
+  const minSlots = minSlotsOverride ?? subjectCredits;
 
   // Initialize savedSlots when initialSlots changes (on load)
   useEffect(() => {
@@ -60,8 +61,12 @@ export function SubjectCard({
     loadingRef.current = true;
 
     try {
+      if (!subjectId) {
+        throw new Error('Subject ID is missing. Please refresh the page.');
+      }
+
       setSaving(true);
-      const slots = await onSave(subject._id, semester, section, null);
+      const slots = await onSave(subjectId, semester, section, null);
       if (slots) {
         setAvailableSlots(slots);
         setSavedSlots([...slots]); // Also update savedSlots when loading from backend
@@ -76,7 +81,7 @@ export function SubjectCard({
       setSaving(false);
       loadingRef.current = false;
     }
-  }, [subject._id, semester, section, , initialSlots, onSave]);
+  }, [subjectId, semester, section, initialSlots, onSave]);
 
   const handleExpand = useCallback(async () => {
     setExpanded((prev) => !prev);
@@ -93,8 +98,12 @@ export function SubjectCard({
     }
 
     try {
+      if (!subjectId) {
+        throw new Error('Subject ID is missing. Please refresh the page.');
+      }
+
       setSaving(true);
-      await onSave(subject._id, semester, section, availableSlots);
+      await onSave(subjectId, semester, section, availableSlots);
       // Update savedSlots after successful save
       setSavedSlots([...availableSlots]);
       setSuccess(true);
@@ -105,7 +114,7 @@ export function SubjectCard({
     } finally {
       setSaving(false);
     }
-  }, [availableSlots, minSlots, subject._id, semester, section, , onSave]);
+  }, [availableSlots, minSlots, subjectId, semester, section, onSave]);
 
   const hasChanges = useMemo(() => {
     const sortedSaved = [...savedSlots].sort();
@@ -157,7 +166,7 @@ export function SubjectCard({
               </span>
               <span className="flex items-center space-x-1">
                 <Clock className="h-3 w-3" />
-                <span>{subject.credits} credits</span>
+                <span>{subjectCredits} credits</span>
               </span>
               <span className="text-xs">
                 {expanded ? availableSlots.length : savedSlots.length}/{minSlots} slots
@@ -199,18 +208,15 @@ export function SubjectCard({
                 availableSlots={availableSlots}
                 onToggle={handleToggleSlot}
                 readonly={readonly}
-                bookedSlots={bookedSlots}
               />
 
               {/* Slot Legend */}
               <div className="flex items-center gap-4 text-xs text-gray-500 dark:text-gray-400 mb-3">
                 <span className="flex items-center gap-1">
-                  <span className="w-4 h-4 rounded bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 flex items-center justify-center">✓</span>
+                  <span className="w-4 h-4 rounded bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 flex items-center justify-center">
+                    <Check className="h-3 w-3" aria-hidden="true" />
+                  </span>
                   Available
-                </span>
-                <span className="flex items-center gap-1">
-                  <span className="w-4 h-4 rounded bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400 flex items-center justify-center">📅</span>
-                  Booked (other subject)
                 </span>
                 <span className="flex items-center gap-1">
                   <span className="w-4 h-4 rounded bg-gray-100 dark:bg-gray-800 text-gray-400 dark:text-gray-600 flex items-center justify-center">-</span>
@@ -223,8 +229,8 @@ export function SubjectCard({
                   <span className={cn(isValid ? 'text-green-600 dark:text-green-400' : 'text-orange-600 dark:text-orange-400')}>
                     {availableSlots.length} available slots
                   </span>
-                  <span className="mx-2">•</span>
-                  <span>Min: {minSlots} • Timetable will schedule {subject.credits} class{subject.credits > 1 ? 'es' : ''}/week</span>
+                  <span className="mx-2">-</span>
+                  <span>Min: {minSlots} - Timetable will schedule {subjectCredits} class{subjectCredits > 1 ? 'es' : ''}/week</span>
                 </div>
 
                 {!readonly && (

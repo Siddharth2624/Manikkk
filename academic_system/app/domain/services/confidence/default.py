@@ -10,8 +10,8 @@ class DefaultConfidenceCalculator(ConfidenceCalculator):
     Base scoring starts at 100, deducts for issues.
 
     Deductions (in order):
-    - Critical constraint (score >= 1.0): -25 each (checked FIRST)
-    - Tight constraint (0.8 <= score < 1.0): -10 each
+    - Critical constraint (score > 1.0): -25 each (checked FIRST)
+    - Tight constraint (0.8 <= score <= 1.0): -10 each
     - Bottleneck slot (>=3 competitors): -15 each
     - Lab infeasible: -40
     - Low diversity (<=3 slots): -5 each
@@ -28,9 +28,11 @@ class DefaultConfidenceCalculator(ConfidenceCalculator):
         """Return confidence score 0-100."""
         score = 100
 
-        # Check CRITICAL first (>= 1.0), then TIGHT (>= 0.8)
+        # Check CRITICAL first (> 1.0), then TIGHT (>= 0.8).
+        # A score of exactly 1.0 means every requested slot has a matching
+        # availability slot. That is tight, but not impossible by itself.
         for cs in constraint_scores:
-            if cs >= 1.0:
+            if cs > 1.0:
                 score -= 25
             elif cs >= 0.8:
                 score -= 10

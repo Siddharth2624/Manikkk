@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { timetableService } from '../../services/timetable';
 import { adminService } from '../../services/admin';
+import { api } from '../../lib/api';
 
 const DAYS = ['MON', 'TUE', 'WED', 'THU', 'FRI'];
 const TIME_SLOTS = [
@@ -109,17 +110,8 @@ export default function AdminEditTimetablePage() {
     if (!semester || !section) return;
 
     try {
-      const token = localStorage.getItem('access_token');
-      const response = await fetch(
-        `${import.meta.env.VITE_API_URL || '/api/v1'}/timetable/versions/${semester}/${section}`,
-        {
-          headers: { 'Authorization': `Bearer ${token}` }
-        }
-      );
-      if (response.ok) {
-        const data = await response.json();
-        setVersions(data.versions || []);
-      }
+      const data = await api(`/timetable/versions/${semester}/${section}`);
+      setVersions(data.versions || []);
     } catch (err) {
       console.error('Failed to fetch versions:', err);
     }
@@ -129,9 +121,7 @@ export default function AdminEditTimetablePage() {
   const fetchReferenceData = useCallback(async () => {
     try {
       // Fetch subjects
-      const subjectsData = await fetch(`${import.meta.env.VITE_API_URL || '/api/v1'}/admin/subjects`, {
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('access_token')}` }
-      }).then(res => res.json());
+      const subjectsData = await adminService.getSubjects();
       setSubjects(subjectsData.subjects || []);
 
       // Fetch faculty
@@ -177,20 +167,15 @@ export default function AdminEditTimetablePage() {
   // Check for conflicts before saving
   const checkConflicts = async (facultyId, roomId, day, slot) => {
     const conflicts = {};
-    const token = localStorage.getItem('access_token');
 
     // Check faculty conflicts
     if (facultyId && facultyId !== slotForm.faculty_id) {
       try {
-        const response = await fetch(
-          `${import.meta.env.VITE_API_URL || '/api/v1'}/timetable/conflicts/faculty/${facultyId}?day=${day}&slot=${slot}&exclude_timetable_id=${timetable?.id || ''}`,
-          { headers: { 'Authorization': `Bearer ${token}` } }
+        const data = await api(
+          `/timetable/conflicts/faculty/${facultyId}?day=${day}&slot=${slot}&exclude_timetable_id=${timetable?.id || ''}`
         );
-        if (response.ok) {
-          const data = await response.json();
-          if (data.conflicts?.length > 0) {
-            conflicts.faculty = data.conflicts;
-          }
+        if (data.conflicts?.length > 0) {
+          conflicts.faculty = data.conflicts;
         }
       } catch (err) {
         console.error('Failed to check faculty conflicts:', err);
@@ -200,15 +185,11 @@ export default function AdminEditTimetablePage() {
     // Check room conflicts
     if (roomId && roomId !== slotForm.room) {
       try {
-        const response = await fetch(
-          `${import.meta.env.VITE_API_URL || '/api/v1'}/timetable/conflicts/room/${roomId}?day=${day}&slot=${slot}&exclude_timetable_id=${timetable?.id || ''}`,
-          { headers: { 'Authorization': `Bearer ${token}` } }
+        const data = await api(
+          `/timetable/conflicts/room/${roomId}?day=${day}&slot=${slot}&exclude_timetable_id=${timetable?.id || ''}`
         );
-        if (response.ok) {
-          const data = await response.json();
-          if (data.conflicts?.length > 0) {
-            conflicts.room = data.conflicts;
-          }
+        if (data.conflicts?.length > 0) {
+          conflicts.room = data.conflicts;
         }
       } catch (err) {
         console.error('Failed to check room conflicts:', err);
@@ -272,32 +253,17 @@ export default function AdminEditTimetablePage() {
     setError(null);
 
     try {
-      const token = localStorage.getItem('access_token');
-      const response = await fetch(
-        `${import.meta.env.VITE_API_URL || '/api/v1'}/timetable/versions/create`,
-        {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            semester: parseInt(semester),
-            section,
-          }),
-        }
-      );
-
-      if (response.ok) {
-        const data = await response.json();
-        setSuccess(`New version ${data.timetable.version} created!`);
-        setTimeout(() => setSuccess(null), 3000);
-        fetchTimetable();
-        fetchVersions();
-      } else {
-        const error = await response.json();
-        throw new Error(error.detail || 'Failed to create version');
-      }
+      const data = await api('/timetable/versions/create', {
+        method: 'POST',
+        body: JSON.stringify({
+          semester: parseInt(semester),
+          section,
+        }),
+      });
+      setSuccess(`New version ${data.timetable.version} created!`);
+      setTimeout(() => setSuccess(null), 3000);
+      fetchTimetable();
+      fetchVersions();
     } catch (err) {
       setError(err.message || 'Failed to create version');
       setTimeout(() => setError(null), 5000);
@@ -311,24 +277,13 @@ export default function AdminEditTimetablePage() {
     if (!semester || !section) return;
 
     try {
-      const token = localStorage.getItem('access_token');
-      const response = await fetch(
-        `${import.meta.env.VITE_API_URL || '/api/v1'}/timetable/versions/activate/${timetableId}?semester=${semester}&section=${section}`,
-        {
-          method: 'POST',
-          headers: { 'Authorization': `Bearer ${token}` }
-        }
-      );
-
-      if (response.ok) {
-        setSuccess('Version activated successfully!');
-        setTimeout(() => setSuccess(null), 3000);
-        fetchTimetable();
-        fetchVersions();
-      } else {
-        const error = await response.json();
-        throw new Error(error.detail || 'Failed to activate version');
-      }
+      await api(`/timetable/versions/activate/${timetableId}?semester=${semester}&section=${section}`, {
+        method: 'POST',
+      });
+      setSuccess('Version activated successfully!');
+      setTimeout(() => setSuccess(null), 3000);
+      fetchTimetable();
+      fetchVersions();
     } catch (err) {
       setError(err.message || 'Failed to activate version');
       setTimeout(() => setError(null), 5000);

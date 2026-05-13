@@ -75,6 +75,38 @@ async def test_analyze_critical_constraint():
 
 
 @pytest.mark.asyncio
+async def test_exact_slot_count_is_warning_not_failure():
+    """Exactly enough slots is tight, but should not block generation by itself."""
+    analyzer = FeasibilityAnalyzer()
+
+    subjects = [
+        Subject(id="s1", code="MATH101", name="Math", semester=1,
+                 subject_type=SubjectType.THEORY, credits=3,
+                 classes_per_week=3)
+    ]
+
+    faculty_availability = {
+        "f1": {"MON": [1, 2, 3]}
+    }
+    subject_faculty_map = {"s1": "f1"}
+
+    report = await analyzer.analyze(
+        semester=1,
+        section="A",
+        subjects=subjects,
+        faculty_availability=faculty_availability,
+        subject_faculty_map=subject_faculty_map,
+        faculty_names={"f1": "Dr. Exact Fit"}
+    )
+
+    assert report.status == FeasibilityStatus.WARNING
+    assert report.errors == []
+    assert report.constraint_scores["s1"].severity == ConstraintSeverity.TIGHT
+    assert report.constraint_scores["s1"].faculty_name == "Dr. Exact Fit"
+    assert any("Dr. Exact Fit" in warning.message for warning in report.warnings.local)
+
+
+@pytest.mark.asyncio
 async def test_detect_bottleneck():
     """Multiple faculty competing for same slot."""
     analyzer = FeasibilityAnalyzer()
@@ -110,6 +142,40 @@ async def test_detect_bottleneck():
     # Should detect slot 1 as bottleneck
     slot_1_warnings = [w for w in report.warnings.global_warnings if w.slot_number == 1]
     assert len(slot_1_warnings) > 0
+
+
+@pytest.mark.asyncio
+async def test_bottleneck_warning_includes_faculty_names():
+    """Global warnings should include readable faculty labels for the UI."""
+    analyzer = FeasibilityAnalyzer()
+
+    subjects = [
+        Subject(id="s1", code="MATH101", name="Math", semester=1,
+                 subject_type=SubjectType.THEORY, credits=3, classes_per_week=3),
+        Subject(id="s2", code="PHY101", name="Physics", semester=1,
+                 subject_type=SubjectType.THEORY, credits=3, classes_per_week=3),
+        Subject(id="s3", code="CS101", name="CS", semester=1,
+                 subject_type=SubjectType.THEORY, credits=3, classes_per_week=3)
+    ]
+    faculty_availability = {
+        "f1": {"MON": [1, 2, 3, 4, 7, 8]},
+        "f2": {"MON": [1, 2, 4, 5, 7, 8]},
+        "f3": {"MON": [1, 3, 6, 7, 8]}
+    }
+    subject_faculty_map = {"s1": "f1", "s2": "f2", "s3": "f3"}
+
+    report = await analyzer.analyze(
+        semester=1,
+        section="A",
+        subjects=subjects,
+        faculty_availability=faculty_availability,
+        subject_faculty_map=subject_faculty_map,
+        faculty_names={"f1": "Dr. A", "f2": "Dr. B", "f3": "Dr. C"}
+    )
+
+    warning = next(w for w in report.warnings.global_warnings if w.slot_number == 1)
+    assert warning.competing_faculty_names == ["Dr. A", "Dr. B", "Dr. C"]
+    assert "Dr. A" in warning.message
 
 
 @pytest.mark.asyncio

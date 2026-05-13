@@ -1,4 +1,4 @@
-import { api, getToken, removeToken, removeUser } from '../lib/api';
+import { api, clearAuthSession } from '../lib/api';
 
 export const authService = {
   login: async (email, password) => {
@@ -18,8 +18,7 @@ export const authService = {
   },
 
   logout: async () => {
-    removeToken();
-    removeUser();
+    clearAuthSession();
   },
 
   getCurrentUser: async () => {

@@ -3,7 +3,6 @@
 from dataclasses import dataclass
 from typing import List, Optional
 from datetime import date, datetime
-from pathlib import Path
 
 from bson import ObjectId
 
@@ -15,20 +14,19 @@ from app.domain.interfaces.repositories import (
     ISubjectRepository,
     ISubjectAssignmentRepository,
 )
-from app.domain.interfaces.file_storage import IFileStorageService
 
 
 @dataclass
 class UploadMaterialRequest:
-    """Request to upload study material."""
+    """Request to create a link-based study material."""
     title: str
     description: Optional[str]
     subject_id: str
     semester: int
     sections: List[str]
     faculty_id: str
-    file_content: bytes
-    file_name: str
+    material_url: str
+    material_date: date
     tags: List[str]
     is_public: bool = True
 
@@ -40,6 +38,7 @@ class SearchMaterialRequest:
     semester: Optional[int] = None
     section: Optional[str] = None
     subject_id: Optional[str] = None
+    faculty_id: Optional[str] = None
 
 
 class StudyMaterialUseCase:
@@ -50,12 +49,11 @@ class StudyMaterialUseCase:
         material_repository: IStudyMaterialRepository,
         subject_repository: ISubjectRepository,
         assignment_repository: ISubjectAssignmentRepository,
-        file_storage: IFileStorageService
+        file_storage=None
     ):
         self.material_repository = material_repository
         self.subject_repository = subject_repository
         self.assignment_repository = assignment_repository
-        self.file_storage = file_storage
 
     async def upload_material(
         self,
@@ -63,7 +61,7 @@ class StudyMaterialUseCase:
         request: UploadMaterialRequest
     ) -> StudyMaterial:
         """
-        Upload a study material.
+        Create a link-based study material.
 
         Args:
             ctx: Request context for authorization
@@ -82,9 +80,11 @@ class StudyMaterialUseCase:
         except Exception:
             raise ValidationError("Invalid subject_id format", field="subject_id")
 
-        # Input validation: Validate file_content is not empty
-        if not request.file_content:
-            raise ValidationError("File content cannot be empty", field="file_content")
+        if not request.title.strip():
+            raise ValidationError("Title is required", field="title")
+
+        if not request.material_url.startswith(("http://", "https://")):
+            raise ValidationError("Material link must start with http:// or https://", field="material_url")
 
         # Role check: ONLY FACULTY can upload materials
         if not ctx.is_faculty():
@@ -95,54 +95,45 @@ class StudyMaterialUseCase:
         if not subject:
             raise ValidationError("Subject not found", field="subject_id")
 
-        # Faculty assignment check: Faculty must be assigned to teach this subject
-        # Check if faculty is assigned to at least one of the sections for this subject
-        has_assignment = False
-        for section in request.sections:
-            assignment = await self.assignment_repository.find_faculty_assignment(
-                faculty_id=ctx.user_id,
-                subject_id=request.subject_id,
-                semester=request.semester,
-                section=section
-            )
-            if assignment:
-                has_assignment = True
-                break
+        assignments = await self.assignment_repository.find_by_faculty(ctx.user_id)
+        matching_assignments = [
+            assignment for assignment in assignments
+            if assignment.subject_id == request.subject_id
+            and assignment.semester == request.semester
+        ]
 
-        if not has_assignment:
+        if not matching_assignments:
             raise AuthorizationError(
-                "Faculty must be assigned to teach this subject for the specified semester/section"
+                "Faculty must be assigned to teach this subject for the selected semester"
             )
 
-        # Determine material type from file extension
-        material_type = self._get_material_type(request.file_name)
+        assigned_sections = sorted({assignment.section for assignment in matching_assignments})
+        requested_sections = [section.strip().upper() for section in request.sections if section.strip()]
+        sections = requested_sections or assigned_sections
 
-        # Save file
-        file_path = await self.file_storage.save_upload(
-            file_content=request.file_content,
-            filename=request.file_name,
-            folder=f"semester_{request.semester}"
-        )
+        invalid_sections = sorted(set(sections) - set(assigned_sections))
+        if invalid_sections:
+            raise AuthorizationError(
+                f"Faculty is not assigned to this subject for section(s): {', '.join(invalid_sections)}"
+            )
 
         # Create material record
         material = StudyMaterial(
             id="",
-            title=request.title,
-            description=request.description,
+            title=request.title.strip(),
+            description=request.description.strip() if request.description else None,
             subject_id=request.subject_id,
             semester=request.semester,
-            sections=request.sections,
-            faculty_id=request.faculty_id,
-            material_type=material_type,
-            file_url=file_path,
-            file_name=request.file_name,
-            file_size=len(request.file_content),
-            upload_date=date.today(),
-            download_count=0,
+            sections=sections,
+            faculty_id=ctx.user_id,
+            material_url=request.material_url.strip(),
+            material_date=request.material_date,
+            access_count=0,
             tags=request.tags,
             is_public=request.is_public,
             created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow()
+            updated_at=datetime.utcnow(),
+            material_type=MaterialType.LINK
         )
 
         return await self.material_repository.save(material)
@@ -164,17 +155,31 @@ class StudyMaterialUseCase:
             # Text search
             return await self.material_repository.search(
                 query=request.query,
-                semester=request.semester
+                semester=request.semester,
+                section=request.section,
+                faculty_id=request.faculty_id,
+                subject_id=request.subject_id
             )
 
         if request.subject_id:
             # By subject
-            return await self.material_repository.find_by_subject(
+            materials = await self.material_repository.find_by_subject(
                 subject_id=request.subject_id,
-                semester=request.semester
+                semester=request.semester,
+                section=request.section,
+                faculty_id=request.faculty_id
             )
+            return materials
 
-        # By semester
+        if request.faculty_id:
+            materials = await self.material_repository.find_by_faculty(request.faculty_id)
+            if request.semester is not None:
+                materials = [m for m in materials if m.semester == request.semester]
+            return materials
+
+        if request.semester is None:
+            return []
+
         return await self.material_repository.find_by_semester(
             semester=request.semester,
             section=request.section
@@ -206,31 +211,12 @@ class StudyMaterialUseCase:
         if not material:
             raise ValueError("Material not found")
 
-        if material.faculty_id != requesting_faculty_id:
+        if requesting_faculty_id and material.faculty_id != requesting_faculty_id:
             raise ValueError("You don't have permission to delete this material")
-
-        # Delete file
-        await self.file_storage.delete_file(material.file_url)
 
         # Delete record
         return await self.material_repository.delete(material_id)
 
     async def increment_downloads(self, material_id: str) -> bool:
-        """Increment download count for a material."""
+        """Increment access count for a material."""
         return await self.material_repository.increment_download_count(material_id)
-
-    def _get_material_type(self, filename: str) -> MaterialType:
-        """Determine material type from filename."""
-        ext = Path(filename).suffix.lower()
-
-        type_map = {
-            ".pdf": MaterialType.PDF,
-            ".doc": MaterialType.DOCUMENT,
-            ".docx": MaterialType.DOCUMENT,
-            ".ppt": MaterialType.PRESENTATION,
-            ".pptx": MaterialType.PRESENTATION,
-            ".zip": MaterialType.ARCHIVE,
-            ".rar": MaterialType.ARCHIVE
-        }
-
-        return type_map.get(ext, MaterialType.OTHER)

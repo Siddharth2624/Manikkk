@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { GraduationCap, Eye, EyeOff, Mail, Lock, User, Briefcase } from 'lucide-react';
 import { authService } from '../services/auth';
+import { setToken, setUser } from '../lib/api';
 import { Card, CardContent } from '../components/ui/card';
 import { Input, Label } from '../components/ui/input';
 import { Button } from '../components/ui/button';
@@ -107,8 +108,8 @@ export default function LoginPage() {
     try {
       if (isLogin) {
         const data = await authService.login(formData.email, formData.password);
-        localStorage.setItem('access_token', data.access_token);
-        localStorage.setItem('user', JSON.stringify(data.user));
+        setToken(data.access_token);
+        setUser(data.user);
         navigate('/dashboard');
       } else {
         const registerData = {

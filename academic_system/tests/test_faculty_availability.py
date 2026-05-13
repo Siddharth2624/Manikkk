@@ -37,9 +37,12 @@ def admin_user():
     return User(
         id="admin123",
         email="admin@test.edu",
+        password_hash="hashed-password",
         full_name="Admin User",
         role=UserRole.ADMIN,
-        is_active=True
+        is_active=True,
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow()
     )
 
 
@@ -49,9 +52,12 @@ def faculty_user():
     return User(
         id="faculty123",
         email="faculty@test.edu",
+        password_hash="hashed-password",
         full_name="Dr. John Doe",
         role=UserRole.FACULTY,
-        is_active=True
+        is_active=True,
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow()
     )
 
 
@@ -61,9 +67,12 @@ def other_faculty_user():
     return User(
         id="faculty456",
         email="other@test.edu",
+        password_hash="hashed-password",
         full_name="Dr. Jane Smith",
         role=UserRole.FACULTY,
-        is_active=True
+        is_active=True,
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow()
     )
 
 
@@ -73,9 +82,12 @@ def student_user():
     return User(
         id="student123",
         email="student@test.edu",
+        password_hash="hashed-password",
         full_name="Jane Student",
         role=UserRole.STUDENT,
-        is_active=True
+        is_active=True,
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow()
     )
 
 
@@ -88,7 +100,6 @@ def existing_assignment():
         semester=1,
         section="A",
         faculty_id="faculty123",
-        academic_year="2024-2025",
         is_primary=True,
         created_at=datetime.utcnow()
     )
@@ -151,7 +162,6 @@ async def test_update_availability_success(
         subject_id="subject123",
         semester=1,
         section="A",
-        academic_year="2024-2025",
         available_slots=[
             AvailableSlot(day=DayOfWeek.MON, slot=1),
             AvailableSlot(day=DayOfWeek.MON, slot=2),
@@ -160,6 +170,7 @@ async def test_update_availability_success(
         created_at=datetime.utcnow(),
         updated_at=datetime.utcnow()
     )
+    mock_availability_repo.find.return_value = updated_availability
     mock_availability_repo.update.return_value = updated_availability
 
     # Create service
@@ -176,7 +187,6 @@ async def test_update_availability_success(
         subject_id="subject123",
         semester=1,
         section="A",
-        academic_year="2024-2025",
         available_slots=[
             {"day": "MON", "slot": 1},
             {"day": "MON", "slot": 2},
@@ -222,7 +232,6 @@ async def test_update_availability_ownership_fails(
         subject_id="subject123",
         semester=1,
         section="A",
-        academic_year="2024-2025",
         available_slots=[
             {"day": "MON", "slot": 1},
             {"day": "MON", "slot": 2},
@@ -267,7 +276,6 @@ async def test_update_availability_min_slots_fails(
         subject_id="subject123",
         semester=1,
         section="A",
-        academic_year="2024-2025",
         available_slots=[
             {"day": "MON", "slot": 1},
             {"day": "MON", "slot": 2}
@@ -312,7 +320,6 @@ async def test_update_availability_no_assignment_fails(
         subject_id="subject123",
         semester=1,
         section="A",
-        academic_year="2024-2025",
         available_slots=[
             {"day": "MON", "slot": 1},
             {"day": "MON", "slot": 2},
@@ -357,7 +364,6 @@ async def test_update_availability_invalid_slot_fails(
         subject_id="subject123",
         semester=1,
         section="A",
-        academic_year="2024-2025",
         available_slots=[
             {"day": "MON", "slot": 1},
             {"day": "MON", "slot": 2},
@@ -389,7 +395,6 @@ async def test_get_effective_availability_with_overrides(
         subject_id="subject123",
         semester=1,
         section="A",
-        academic_year="2024-2025",
         available_slots=[
             AvailableSlot(day=DayOfWeek.MON, slot=1),
             AvailableSlot(day=DayOfWeek.MON, slot=2),
@@ -407,7 +412,6 @@ async def test_get_effective_availability_with_overrides(
         subject_id="subject123",
         semester=1,
         section="A",
-        academic_year="2024-2025",
         override_type=OverrideType.PERSISTENT,
         applied=False,
         slots=[
@@ -435,7 +439,6 @@ async def test_get_effective_availability_with_overrides(
         subject_id="subject123",
         semester=1,
         section="A",
-        academic_year="2024-2025",
         requesting_user=faculty_user
     )
 
@@ -479,7 +482,6 @@ async def test_get_effective_availability_unauthorized_fails(
             subject_id="subject123",
             semester=1,
             section="A",
-            academic_year="2024-2025",
             requesting_user=other_faculty_user
         )
 
@@ -516,7 +518,6 @@ async def test_update_availability_duplicate_slots_fails(
         subject_id="subject123",
         semester=1,
         section="A",
-        academic_year="2024-2025",
         available_slots=[
             {"day": "MON", "slot": 1},
             {"day": "MON", "slot": 1},  # Duplicate

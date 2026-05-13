@@ -8,12 +8,13 @@ export const adminAssignmentService = {
     if (filters.section) params.append('section', filters.section);
     if (filters.subjectId) params.append('subject_id', filters.subjectId);
     if (filters.facultyId) params.append('faculty_id', filters.facultyId);
-    return await api(`/admin/subject-assignments?${params.toString()}`);
+    const data = await api(`/admin/assignments?${params.toString()}`);
+    return { assignments: Array.isArray(data) ? data : (data?.assignments || []) };
   },
 
   // Create new subject assignment
   create: async (data) => {
-    return await api('/admin/subject-assignments', {
+    return await api('/admin/assign-subject', {
       method: 'POST',
       body: JSON.stringify(data),
     });
@@ -21,7 +22,7 @@ export const adminAssignmentService = {
 
   // Delete assignment
   delete: async (assignmentId) => {
-    return await api(`/admin/subject-assignments/${assignmentId}`, {
+    return await api(`/admin/assign-subject/${assignmentId}`, {
       method: 'DELETE',
     });
   },
@@ -48,14 +49,14 @@ export const adminAssignmentService = {
   getOverrides: async (filters = {}) => {
     const params = new URLSearchParams();
     if (filters.facultyId) params.append('faculty_id', filters.facultyId);
-    if (filters.subjectId) params.append('subject_id', filters.facultyId);
-    if (filters.fromDate) params.append('from_date', filters.fromDate);
-    return await api(`/admin/override-log?${params.toString()}`);
+    if (filters.subjectId) params.append('subject_id', filters.subjectId);
+    const data = await api(`/admin/overrides?${params.toString()}`);
+    return { overrides: Array.isArray(data) ? data : (data?.overrides || []) };
   },
 
   // Delete override
   deleteOverride: async (overrideId) => {
-    return await api(`/admin/override-log/${overrideId}`, {
+    return await api(`/admin/overrides/${overrideId}`, {
       method: 'DELETE',
     });
   },

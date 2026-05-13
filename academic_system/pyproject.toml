@@ -6,16 +6,17 @@ authors = ["Manik Bhagat <bhagatmanik4321@gmail.com>"]
 
 [tool.poetry.dependencies]
 python = "^3.10"
-fastapi = "^0.109.0"
-uvicorn = {extras = ["standard"], version = "^0.27.0"}
-motor = "^3.3.2"
-pydantic = "^2.5.3"
-pydantic-settings = "^2.1.0"
+fastapi = "^0.121.1"
+uvicorn = {extras = ["standard"], version = "^0.38.0"}
+motor = "^3.7.1"
+pymongo = "^4.15.2"
+pydantic = "^2.12.3"
+pydantic-settings = "^2.11.0"
 python-jose = {extras = ["cryptography"], version = "^3.3.0"}
 passlib = {extras = ["bcrypt"], version = "^1.7.4"}
-python-multipart = "^0.0.6"
-email-validator = "^2.1.0"
-aiofiles = "^23.2.1"
+python-multipart = "^0.0.20"
+email-validator = "^2.3.0"
+aiofiles = "^24.1.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.4.4"
@@ -23,7 +24,7 @@ pytest-asyncio = "^0.23.3"
 black = "^24.1.1"
 isort = "^5.13.2"
 mypy = "^1.8.0"
-httpx = "^0.26.0"
+httpx = "^0.28.1"
 
 [build-system]
 requires = ["poetry-core"]

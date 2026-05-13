@@ -20,7 +20,8 @@ class ITimetableGenerator(ABC):
         semester: int,
         sections: List[str],
         subject_ids: List[str],
-        faculty_availability: Dict[str, Dict[DayOfWeek, List[int]]]
+        faculty_availability: Dict[str, Dict[DayOfWeek, List[int]]],
+        occupied_slots: Optional[List[Dict[str, Any]]] = None
     ) -> Timetable:
         """
         Generate a timetable for the given parameters.

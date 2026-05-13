@@ -15,16 +15,16 @@ def test_calculate_perfect_score():
     assert score == 100
 
 def test_calculate_critical_penalty():
-    """Critical constraints get -25 each."""
+    """Critical constraints get -25 each; exact-fit constraints are tight."""
     calc = DefaultConfidenceCalculator()
     score = calc.calculate(
-        constraint_scores=[1.0, 1.2],  # Two critical
+        constraint_scores=[1.0, 1.2],  # One tight, one critical
         bottleneck_count=0,
         total_faculty=2,
         lab_feasible=True,
         low_diversity_count=0
     )
-    assert score == 50  # 100 - 25 - 25
+    assert score == 65  # 100 - 10 - 25
 
 def test_calculate_tight_penalty():
     """Tight constraints get -10 each (after critical check)."""

@@ -335,7 +335,9 @@ class IStudyMaterialRepository(ABC):
     async def find_by_subject(
         self,
         subject_id: str,
-        semester: Optional[int] = None
+        semester: Optional[int] = None,
+        section: Optional[str] = None,
+        faculty_id: Optional[str] = None
     ) -> List[StudyMaterial]:
         """Find study materials for a subject."""
         pass
@@ -359,6 +361,9 @@ class IStudyMaterialRepository(ABC):
         self,
         query: str,
         semester: Optional[int] = None,
+        section: Optional[str] = None,
+        faculty_id: Optional[str] = None,
+        subject_id: Optional[str] = None,
         skip: int = 0,
         limit: int = 20
     ) -> List[StudyMaterial]:
@@ -402,6 +407,17 @@ class IFacultyAvailabilityRepository(ABC):
         self, faculty_id: str
     ) -> List[FacultyAvailability]:
         """Find all availability for a faculty member."""
+        pass
+
+    @abstractmethod
+    async def find_by_faculty_and_subject(
+        self,
+        faculty_id: str,
+        subject_id: str,
+        semester: int,
+        section: str
+    ) -> Optional[FacultyAvailability]:
+        """Find availability for a specific faculty subject assignment."""
         pass
 
     @abstractmethod

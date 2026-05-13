@@ -212,8 +212,8 @@ class TestConstraintScore:
         assert score2.severity == ConstraintSeverity.TIGHT
 
     def test_constraint_score_severity_critical(self):
-        """Test severity is CRITICAL when score >= 1.0."""
-        # Exact 1.0
+        """Test severity is CRITICAL only when required slots exceed availability."""
+        # Exact 1.0 is tight, not critical: there are enough slots, but no buffer.
         score1 = ConstraintScore(
             subject_id="SUB001",
             faculty_id="FAC001",
@@ -223,7 +223,7 @@ class TestConstraintScore:
             unique_available_slots=10,
         )
         assert score1.score == 1.0
-        assert score1.severity == ConstraintSeverity.CRITICAL
+        assert score1.severity == ConstraintSeverity.TIGHT
 
         # Greater than 1.0
         score2 = ConstraintScore(
@@ -245,7 +245,7 @@ class TestConstraintScore:
         assert ConstraintScore.get_severity(0.79) == ConstraintSeverity.MODERATE
         assert ConstraintScore.get_severity(0.8) == ConstraintSeverity.TIGHT
         assert ConstraintScore.get_severity(0.99) == ConstraintSeverity.TIGHT
-        assert ConstraintScore.get_severity(1.0) == ConstraintSeverity.CRITICAL
+        assert ConstraintScore.get_severity(1.0) == ConstraintSeverity.TIGHT
         assert ConstraintScore.get_severity(2.0) == ConstraintSeverity.CRITICAL
 
     def test_constraint_score_is_tightly_constrained_property(self):

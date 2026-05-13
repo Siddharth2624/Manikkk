@@ -195,10 +195,7 @@ class AttendanceRepository(IAttendanceRepository):
                     "$sum": {"$cond": [{"$eq": ["$status", "present"]}, 1, 0]}
                 },
                 "absent": {
-                    "$sum": {"$cond": [{"$eq": ["$status", "absent"]}, 1, 0]}
-                },
-                "excused": {
-                    "$sum": {"$cond": [{"$eq": ["$status", "excused"]}, 1, 0]}
+                    "$sum": {"$cond": [{"$in": ["$status", ["absent", "excused"]]}, 1, 0]}
                 }
             }}
         ]
@@ -210,8 +207,7 @@ class AttendanceRepository(IAttendanceRepository):
             total = result["total"]
             present = result["present"]
             absent = result["absent"]
-            excused = result["excused"]
-            percentage = ((present + excused) / total * 100) if total > 0 else 0
+            percentage = (present / total * 100) if total > 0 else 0
 
             summaries.append(AttendanceSummary(
                 student_id=student_id,
@@ -219,7 +215,7 @@ class AttendanceRepository(IAttendanceRepository):
                 total_classes=total,
                 present_count=present,
                 absent_count=absent,
-                excused_count=excused,
+                excused_count=0,
                 percentage=round(percentage, 2),
                 is_below_threshold=percentage < 75.0
             ))

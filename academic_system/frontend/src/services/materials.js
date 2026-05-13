@@ -1,17 +1,15 @@
 import { api } from '../lib/api';
 
 export const materialService = {
-  upload: async (formData) => {
-    const token = localStorage.getItem('access_token');
-    const response = await fetch('/api/v1/materials/upload', {
+  create: async (data) => {
+    return await api('/materials', {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-      body: formData,
+      body: JSON.stringify(data),
     });
-    if (!response.ok) throw new Error('Upload failed');
-    return response.json();
+  },
+
+  upload: async (data) => {
+    return await materialService.create(data);
   },
 
   list: async (params = {}) => {
@@ -19,13 +17,19 @@ export const materialService = {
     return await api(`/materials?${searchParams}`);
   },
 
+  subjects: async (params = {}) => {
+    const searchParams = new URLSearchParams(params);
+    return await api(`/materials/subjects?${searchParams}`);
+  },
+
   getById: async (id) => {
     return await api(`/materials/${id}`);
   },
 
-  download: async (id) => {
-    const token = localStorage.getItem('access_token');
-    window.open(`/api/v1/materials/${id}/download?token=${token}`, '_blank');
+  open: async (id) => {
+    return await api(`/materials/${id}/access`, {
+      method: 'POST',
+    });
   },
 
   delete: async (id) => {

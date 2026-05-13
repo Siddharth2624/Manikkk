@@ -171,16 +171,23 @@ class TimetableUseCase:
             if not validation["valid"]:
                 raise ValueError(f"Validation failed: {', '.join(validation['errors'])}")
 
+            occupied_slots = await self._get_semester_occupied_slots(
+                semester=request.semester,
+                exclude_section=request.section
+            )
+
             generated = await self.timetable_generator.generate(
                 semester=request.semester,
                 sections=[request.section],
                 subject_ids=request.subject_ids,
                 faculty_availability=availability,
                 subject_faculty_map=request.subject_faculty_map,
-                faculty_names=request.faculty_names
+                faculty_names=request.faculty_names,
+                occupied_slots=occupied_slots
             )
             # Extract schedule from generated result
             schedule = generated.schedule
+            self._validate_daily_lunch_breaks(schedule)
         else:
             # Create empty schedule structure
             schedule = self._create_empty_schedule()
@@ -219,6 +226,108 @@ class TimetableUseCase:
             timetable=saved,
             warnings=validation.get("warnings", []) if self.timetable_generator else []
         )
+
+    def _validate_daily_lunch_breaks(self, schedule: List[DaySchedule]) -> None:
+        """Ensure each generated working day has exactly one lunch break."""
+        for day_schedule in schedule:
+            lunch_slots = [
+                slot.slot
+                for slot in day_schedule.slots
+                if slot.is_lunch()
+            ]
+
+            if len(lunch_slots) != 1 or lunch_slots[0] not in {5, 6}:
+                day = (
+                    day_schedule.day.value
+                    if hasattr(day_schedule.day, "value")
+                    else str(day_schedule.day)
+                )
+                raise ValueError(
+                    "Conflict: Invalid lunch placement for "
+                    f"{day}. Exactly one lunch break is required in either "
+                    "slot 5 (12:20 - 13:10) or slot 6 (13:10 - 14:00)."
+                )
+
+    async def _get_semester_occupied_slots(
+        self,
+        semester: int,
+        exclude_section: str
+    ) -> List[Dict[str, Any]]:
+        """
+        Return class slots already used by other active sections in the semester.
+
+        The project models one classroom capacity per semester, so Section A and
+        Section B cannot hold classes at the same day/slot.
+        """
+        find_active_by_semester = getattr(self.timetable_repository, "find_active_by_semester", None)
+        if not callable(find_active_by_semester):
+            return []
+
+        timetables = await find_active_by_semester(
+            semester=semester,
+            exclude_section=exclude_section
+        )
+        if not isinstance(timetables, list):
+            return []
+
+        occupied = []
+        subject_cache: Dict[str, Dict[str, Optional[str]]] = {}
+        faculty_cache: Dict[str, Optional[str]] = {}
+
+        async def _subject_info(subject_id: Optional[str]) -> Dict[str, Optional[str]]:
+            if not subject_id:
+                return {"name": None, "code": None, "subject_type": None}
+            if subject_id not in subject_cache:
+                subject_cache[subject_id] = {"name": None, "code": None, "subject_type": None}
+                try:
+                    subject = await self.subject_repository.find_by_id(subject_id)
+                    if subject:
+                        subject_cache[subject_id] = {
+                            "name": subject.name,
+                            "code": subject.code,
+                            "subject_type": (
+                                subject.subject_type.value
+                                if hasattr(subject.subject_type, "value")
+                                else str(subject.subject_type)
+                            ),
+                        }
+                except Exception:
+                    pass
+            return subject_cache[subject_id]
+
+        async def _faculty_name(faculty_id: Optional[str]) -> Optional[str]:
+            if not faculty_id or not self.user_repo:
+                return None
+            if faculty_id not in faculty_cache:
+                faculty_cache[faculty_id] = None
+                try:
+                    faculty = await self.user_repo.find_by_id(faculty_id)
+                    if faculty:
+                        faculty_cache[faculty_id] = faculty.full_name
+                except Exception:
+                    pass
+            return faculty_cache[faculty_id]
+
+        for timetable in timetables:
+            for day_schedule in timetable.schedule:
+                for slot in day_schedule.slots:
+                    if not slot.subject_id:
+                        continue
+                    subject_info = await _subject_info(slot.subject_id)
+                    faculty_name = await _faculty_name(slot.faculty_id)
+                    occupied.append({
+                        "day": day_schedule.day,
+                        "slot": slot.slot,
+                        "section": timetable.section,
+                        "subject_id": slot.subject_id,
+                        "faculty_id": slot.faculty_id,
+                        "subject_name": subject_info.get("name"),
+                        "subject_code": subject_info.get("code"),
+                        "subject_type": subject_info.get("subject_type"),
+                        "faculty_name": faculty_name,
+                    })
+
+        return occupied
 
     def _create_empty_schedule(self) -> List[DaySchedule]:
         """Create empty schedule structure for all days."""
@@ -783,6 +892,7 @@ class TimetableUseCase:
                     subjects=subjects,
                     faculty_availability=detected["faculty_availability"],
                     subject_faculty_map=detected["subject_faculty_map"],
+                    faculty_names=detected.get("faculty_names", {}),
                 )
                 logger.info(f"[DEBUG] Feasibility report status: {feasibility_report.status}, confidence: {feasibility_report.confidence_score}")
 

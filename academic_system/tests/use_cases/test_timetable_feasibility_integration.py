@@ -8,6 +8,8 @@ from app.use_cases.timetable import TimetableUseCase
 from app.domain.entities.feasibility import FeasibilityStatus, Recoverability, WarningCollection
 from app.domain.exceptions import FeasibilityError
 from app.domain.entities.subject import Subject, SubjectType
+from app.domain.entities.timetable import DayOfWeek, DaySchedule, Timetable, TimetableSlot
+from datetime import datetime
 
 
 @pytest.mark.asyncio
@@ -112,6 +114,60 @@ async def test_generate_proceeds_on_feasibility_warning():
                 assert response.feasibility_warnings is not None
                 assert response.confidence_score == 65
                 assert response.recoverability == "DIFFICULT"
+
+
+@pytest.mark.asyncio
+async def test_collects_same_semester_occupied_slots_excluding_current_section():
+    """Generation should reserve class slots from other active sections in the semester."""
+    use_case = _create_use_case()
+    other_section_timetable = Timetable(
+        id="tt-a",
+        semester=1,
+        section="A",
+        version=1,
+        is_active=True,
+        schedule=[
+            DaySchedule(
+                day=DayOfWeek.MONDAY,
+                slots=[
+                    TimetableSlot(slot=1, subject_id="sub-a", faculty_id="fac-a"),
+                    TimetableSlot(slot=2, subject_id=None, faculty_id=None, room="LUNCH"),
+                    TimetableSlot(slot=3, subject_id=None, faculty_id=None),
+                ]
+            )
+        ],
+        created_by="admin",
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow()
+    )
+    use_case.timetable_repository.find_active_by_semester = AsyncMock(
+        return_value=[other_section_timetable]
+    )
+    use_case.subject_repository.find_by_id = AsyncMock(return_value=None)
+    use_case.user_repo.find_by_id = AsyncMock(return_value=None)
+
+    occupied = await use_case._get_semester_occupied_slots(
+        semester=1,
+        exclude_section="B"
+    )
+
+    assert occupied == [
+        {
+            "day": DayOfWeek.MONDAY,
+            "slot": 1,
+            "section": "A",
+            "subject_id": "sub-a",
+            "faculty_id": "fac-a",
+            "subject_name": None,
+            "subject_code": None,
+            "subject_type": None,
+            "faculty_name": None,
+        }
+    ]
+    use_case.timetable_repository.find_active_by_semester.assert_awaited_once_with(
+        semester=1,
+        exclude_section="B"
+    )
 
 
 def _create_use_case():

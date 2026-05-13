@@ -93,6 +93,23 @@ class TimetableRepository:
         })
         return self._to_entity(document) if document else None
 
+    async def find_active_by_semester(
+        self,
+        semester: int,
+        exclude_section: Optional[str] = None
+    ) -> List[Timetable]:
+        """Find active timetables for a semester, optionally excluding one section."""
+        query = {
+            "semester": semester,
+            "is_active": True
+        }
+        if exclude_section is not None:
+            query["section"] = {"$ne": exclude_section}
+
+        cursor = self.collection.find(query).sort("section", 1)
+        documents = await cursor.to_list(length=None)
+        return [self._to_entity(doc) for doc in documents]
+
     async def find_by_id(self, timetable_id: str) -> Optional[Timetable]:
         """Find timetable by ID."""
         try:

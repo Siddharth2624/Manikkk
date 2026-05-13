@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getUser } from '../lib/api';
+import { api, clearAuthSession, getUser } from '../lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import {
@@ -44,19 +44,10 @@ export default function DashboardPage() {
         if (user.role === 'admin') {
           // Try to fetch stats from backend
           try {
-            const response = await fetch(`${import.meta.env.VITE_API_URL || '/api/v1'}/admin/stats`, {
-              headers: {
-                'Authorization': `Bearer ${localStorage.getItem('access_token')}`,
-              },
-            });
-
-            if (response.ok) {
-              const data = await response.json();
-              setStats(data);
-            } else {
-              // Stats endpoint unavailable, using default values
-            }
+            const data = await api('/admin/stats');
+            setStats(data);
           } catch (err) {
+            if (err.status === 401) return;
             // Stats fetch failed, using default values
           }
         }
@@ -71,8 +62,7 @@ export default function DashboardPage() {
   }, [user, navigate]);
 
   const handleLogout = () => {
-    localStorage.removeItem('access_token');
-    localStorage.removeItem('user');
+    clearAuthSession();
     navigate('/login');
   };
 
@@ -81,6 +71,10 @@ export default function DashboardPage() {
     if (hour < 12) return 'Good morning';
     if (hour < 17) return 'Good afternoon';
     return 'Good evening';
+  };
+
+  const getDisplayName = () => {
+    return user?.full_name || user?.email?.split('@')[0] || 'User';
   };
 
   const getQuickActions = () => {
@@ -263,7 +257,7 @@ export default function DashboardPage() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold tracking-tight text-gray-900 dark:text-white">
-            {getGreeting()}, {user?.full_name?.split(' ')[0] || 'Admin'}!
+            {getGreeting()}, {getDisplayName()}!
           </h1>
           <p className="text-gray-600 dark:text-gray-400 mt-1">
             {user?.role === 'student' && `Semester ${user?.semester} • Section ${user?.section}`}

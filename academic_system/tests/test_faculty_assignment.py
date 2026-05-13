@@ -1,7 +1,7 @@
 """Tests for faculty assignment service."""
 
 import pytest
-from unittest.mock import Mock, AsyncMock, MagicMock
+from unittest.mock import Mock, AsyncMock
 from datetime import datetime
 
 from app.use_cases.faculty_assignment import (
@@ -18,12 +18,29 @@ from app.domain.exceptions import ValidationError, ResourceNotFoundError, Author
 @pytest.fixture
 def mock_db():
     """Mock MongoDB database."""
+    class FakeTransaction:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        def start_transaction(self):
+            return FakeTransaction()
+
+    class FakeClient:
+        async def start_session(self):
+            return FakeSession()
+
     db = Mock()
-    client = Mock()
-    client.start_session = AsyncMock()
-    client.start_session.return_value.__aenter__ = AsyncMock()
-    client.start_session.return_value.__aexit__ = AsyncMock()
-    db.client = client
+    db.client = FakeClient()
     return db
 
 
@@ -33,9 +50,12 @@ def admin_user():
     return User(
         id="admin123",
         email="admin@test.edu",
+        password_hash="hashed-password",
         full_name="Admin User",
         role=UserRole.ADMIN,
-        is_active=True
+        is_active=True,
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow()
     )
 
 
@@ -45,9 +65,12 @@ def faculty_user():
     return User(
         id="faculty123",
         email="faculty@test.edu",
+        password_hash="hashed-password",
         full_name="Dr. John Doe",
         role=UserRole.FACULTY,
-        is_active=True
+        is_active=True,
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow()
     )
 
 
@@ -57,9 +80,12 @@ def student_user():
     return User(
         id="student123",
         email="student@test.edu",
+        password_hash="hashed-password",
         full_name="Jane Student",
         role=UserRole.STUDENT,
-        is_active=True
+        is_active=True,
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow()
     )
 
 
@@ -78,11 +104,54 @@ def test_subject():
 
 
 @pytest.fixture
+def test_lab_subject():
+    """Create test lab subject."""
+    return Subject(
+        id="lab123",
+        code="CS151",
+        name="Programming Lab",
+        semester=1,
+        subject_type=SubjectType.LAB,
+        credits=2,
+        classes_per_week=2
+    )
+
+
+@pytest.fixture
+def second_theory_subject():
+    """Create a second theory subject."""
+    return Subject(
+        id="subject456",
+        code="CS102",
+        name="Data Structures",
+        semester=1,
+        subject_type=SubjectType.THEORY,
+        credits=3,
+        classes_per_week=3
+    )
+
+
+@pytest.fixture
+def second_lab_subject():
+    """Create a second lab subject."""
+    return Subject(
+        id="lab456",
+        code="CS152",
+        name="Data Structures Lab",
+        semester=1,
+        subject_type=SubjectType.LAB,
+        credits=2,
+        classes_per_week=2
+    )
+
+
+@pytest.fixture
 def mock_assignment_repo():
     """Mock subject assignment repository."""
     repo = Mock()
     repo.save = AsyncMock()
     repo.find_faculty_assignment = AsyncMock(return_value=None)
+    repo.find_by_faculty_and_semester = AsyncMock(return_value=[])
     repo.find_by_id = AsyncMock(return_value=None)
     repo.delete = AsyncMock(return_value=True)
     return repo
@@ -120,7 +189,6 @@ async def test_assign_subject_success(
         semester=1,
         section="A",
         faculty_id="faculty123",
-        academic_year="2024-2025",
         is_primary=True,
         created_at=datetime.utcnow()
     )
@@ -140,7 +208,6 @@ async def test_assign_subject_success(
         faculty_id="faculty123",
         semester=1,
         section="A",
-        academic_year="2024-2025",
         is_primary=True
     )
 
@@ -177,7 +244,6 @@ async def test_assign_subject_duplicate_fails(
         semester=1,
         section="A",
         faculty_id="faculty123",
-        academic_year="2024-2025",
         is_primary=True,
         created_at=datetime.utcnow()
     )
@@ -197,7 +263,6 @@ async def test_assign_subject_duplicate_fails(
         faculty_id="faculty123",
         semester=1,
         section="A",
-        academic_year="2024-2025",
         is_primary=True
     )
 
@@ -232,7 +297,6 @@ async def test_assign_subject_not_found_fails(
         faculty_id="faculty123",
         semester=1,
         section="A",
-        academic_year="2024-2025",
         is_primary=True
     )
 
@@ -268,7 +332,6 @@ async def test_assign_subject_faculty_not_found_fails(
         faculty_id="nonexistent_faculty",
         semester=1,
         section="A",
-        academic_year="2024-2025",
         is_primary=True
     )
 
@@ -299,7 +362,6 @@ async def test_assign_subject_non_admin_fails(
         faculty_id="faculty123",
         semester=1,
         section="A",
-        academic_year="2024-2025",
         is_primary=True
     )
 
@@ -335,7 +397,6 @@ async def test_assign_subject_non_faculty_role_fails(
         faculty_id="student123",  # Student ID
         semester=1,
         section="A",
-        academic_year="2024-2025",
         is_primary=True
     )
 
@@ -344,3 +405,156 @@ async def test_assign_subject_non_faculty_role_fails(
         await service.assign_subject(request, admin_user)
 
     assert "not a faculty member" in str(exc_info.value).lower()
+
+
+@pytest.mark.asyncio
+async def test_assign_subject_allows_one_theory_and_one_lab_per_semester(
+    mock_db, admin_user, faculty_user, test_subject, test_lab_subject,
+    mock_assignment_repo, mock_subject_repo, mock_user_repo
+):
+    """Test that a faculty member can have one theory and one lab in a semester."""
+    mock_user_repo.find_by_id.return_value = faculty_user
+    mock_assignment_repo.find_by_faculty_and_semester.return_value = [
+        SubjectAssignment(
+            id="existing123",
+            subject_id=test_subject.id,
+            semester=1,
+            section="A",
+            faculty_id=faculty_user.id,
+            is_primary=True,
+            created_at=datetime.utcnow()
+        )
+    ]
+
+    def find_subject(subject_id):
+        return {
+            test_lab_subject.id: test_lab_subject,
+            test_subject.id: test_subject,
+        }.get(subject_id)
+
+    mock_subject_repo.find_by_id.side_effect = find_subject
+    mock_assignment_repo.save.return_value = SubjectAssignment(
+        id="assignment123",
+        subject_id=test_lab_subject.id,
+        semester=1,
+        section="A",
+        faculty_id=faculty_user.id,
+        is_primary=True,
+        created_at=datetime.utcnow()
+    )
+
+    request = AssignSubjectRequest(
+        subject_id=test_lab_subject.id,
+        faculty_id=faculty_user.id,
+        semester=1,
+        section="A",
+        is_primary=True
+    )
+
+    service = FacultyAssignmentService(
+        mock_assignment_repo,
+        mock_subject_repo,
+        mock_user_repo,
+        mock_db
+    )
+
+    result = await service.assign_subject(request, admin_user)
+
+    assert result.assignment.subject_id == test_lab_subject.id
+    mock_assignment_repo.save.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_assign_subject_rejects_second_theory_in_same_semester(
+    mock_db, admin_user, faculty_user, test_subject, second_theory_subject,
+    mock_assignment_repo, mock_subject_repo, mock_user_repo
+):
+    """Test that a faculty member cannot have two different theory subjects."""
+    mock_user_repo.find_by_id.return_value = faculty_user
+    mock_assignment_repo.find_by_faculty_and_semester.return_value = [
+        SubjectAssignment(
+            id="existing123",
+            subject_id=test_subject.id,
+            semester=1,
+            section="A",
+            faculty_id=faculty_user.id,
+            is_primary=True,
+            created_at=datetime.utcnow()
+        )
+    ]
+
+    def find_subject(subject_id):
+        return {
+            second_theory_subject.id: second_theory_subject,
+            test_subject.id: test_subject,
+        }.get(subject_id)
+
+    mock_subject_repo.find_by_id.side_effect = find_subject
+
+    service = FacultyAssignmentService(
+        mock_assignment_repo,
+        mock_subject_repo,
+        mock_user_repo,
+        mock_db
+    )
+    request = AssignSubjectRequest(
+        subject_id=second_theory_subject.id,
+        faculty_id=faculty_user.id,
+        semester=1,
+        section="A",
+        is_primary=True
+    )
+
+    with pytest.raises(ValidationError) as exc_info:
+        await service.assign_subject(request, admin_user)
+
+    assert "one theory subject" in str(exc_info.value).lower()
+    mock_assignment_repo.save.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_assign_subject_rejects_second_lab_in_same_semester(
+    mock_db, admin_user, faculty_user, test_lab_subject, second_lab_subject,
+    mock_assignment_repo, mock_subject_repo, mock_user_repo
+):
+    """Test that a faculty member cannot have two different lab subjects."""
+    mock_user_repo.find_by_id.return_value = faculty_user
+    mock_assignment_repo.find_by_faculty_and_semester.return_value = [
+        SubjectAssignment(
+            id="existing123",
+            subject_id=test_lab_subject.id,
+            semester=1,
+            section="A",
+            faculty_id=faculty_user.id,
+            is_primary=True,
+            created_at=datetime.utcnow()
+        )
+    ]
+
+    def find_subject(subject_id):
+        return {
+            second_lab_subject.id: second_lab_subject,
+            test_lab_subject.id: test_lab_subject,
+        }.get(subject_id)
+
+    mock_subject_repo.find_by_id.side_effect = find_subject
+
+    service = FacultyAssignmentService(
+        mock_assignment_repo,
+        mock_subject_repo,
+        mock_user_repo,
+        mock_db
+    )
+    request = AssignSubjectRequest(
+        subject_id=second_lab_subject.id,
+        faculty_id=faculty_user.id,
+        semester=1,
+        section="A",
+        is_primary=True
+    )
+
+    with pytest.raises(ValidationError) as exc_info:
+        await service.assign_subject(request, admin_user)
+
+    assert "one lab subject" in str(exc_info.value).lower()
+    mock_assignment_repo.save.assert_not_called()

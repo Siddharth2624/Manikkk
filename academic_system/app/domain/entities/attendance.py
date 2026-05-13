@@ -7,7 +7,11 @@ from enum import Enum
 
 
 class AttendanceStatus(str, Enum):
-    """Attendance status."""
+    """Attendance status.
+
+    New attendance marking only supports PRESENT and ABSENT. EXCUSED is kept so
+    older records can still be read safely.
+    """
     PRESENT = "present"
     ABSENT = "absent"
     EXCUSED = "excused"
@@ -109,9 +113,10 @@ class AttendanceSummary:
         absent = sum(1 for r in records if r.is_absent())
         excused = sum(1 for r in records if r.is_excused())
 
-        # Calculate percentage (excused counted as present)
-        effective_present = present + excused
-        percentage = (effective_present / total * 100) if total > 0 else 0.0
+        # Legacy excused records are treated as absent in the two-status model.
+        absent += excused
+        excused = 0
+        percentage = (present / total * 100) if total > 0 else 0.0
 
         return cls(
             student_id=student_id,

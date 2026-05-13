@@ -3,6 +3,7 @@
 from pydantic import BaseModel, Field
 from typing import List, Optional
 from enum import Enum
+from datetime import datetime
 
 
 class DayOfWeekEnum(str, Enum):
@@ -67,16 +68,17 @@ class AssignmentResponse(BaseModel):
     id: str
     faculty_id: str
     subject_id: str
-    subject_name: str
     semester: int
     section: str
+    created_at: datetime
 
 
 class SubjectInfo(BaseModel):
     """Subject information nested in assignment response."""
-    _id: str
+    id: str
     code: str
     name: str
+    credits: int = 3
 
 
 class MySubjectResponse(BaseModel):
@@ -88,7 +90,16 @@ class MySubjectResponse(BaseModel):
 
 
 class FacultyAssignmentResponse(BaseModel):
-    assignments: List[dict]
+    id: str
+    faculty_id: str
+    faculty_name: str = ""
+    faculty_email: str = ""
+    subject_id: str
+    subject_name: str = ""
+    subject_code: str = ""
+    semester: int
+    section: str
+    created_at: datetime
 
 
 class AvailabilityResponse(BaseModel):
@@ -114,7 +125,19 @@ class EffectiveAvailabilityResponse(BaseModel):
 
 
 class OverrideLogResponse(BaseModel):
-    overrides: List[dict]
+    id: str
+    faculty_id: str
+    faculty_name: str = ""
+    subject_id: str
+    subject_name: str = ""
+    semester: int
+    section: str
+    override_type: str
+    slots: List[OverrideSlotDTO]
+    admin_id: str
+    admin_name: str = ""
+    timestamp: datetime
+    applied: bool
 
 
 class OverrideResponse(BaseModel):
@@ -122,6 +145,9 @@ class OverrideResponse(BaseModel):
     admin_id: str
     faculty_id: str
     subject_id: str
+    semester: int
+    section: str
     override_type: str
     slots: List[OverrideSlotDTO]
-    timestamp: str
+    timestamp: datetime
+    applied: bool

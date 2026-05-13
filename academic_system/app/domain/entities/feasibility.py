@@ -36,8 +36,8 @@ class ConstraintSeverity(str, Enum):
 
     - COMFORTABLE: score < 0.5 (plenty of available slots)
     - MODERATE: 0.5 <= score < 0.8 (some constraints, workable)
-    - TIGHT: 0.8 <= score < 1.0 (very constrained, needs careful planning)
-    - CRITICAL: score >= 1.0 (not enough slots, impossible as-is)
+    - TIGHT: 0.8 <= score <= 1.0 (very constrained, needs careful planning)
+    - CRITICAL: score > 1.0 (not enough slots, impossible as-is)
     """
     COMFORTABLE = "COMFORTABLE"
     MODERATE = "MODERATE"
@@ -123,7 +123,7 @@ class ConstraintScore:
             return ConstraintSeverity.COMFORTABLE
         elif score < 0.8:
             return ConstraintSeverity.MODERATE
-        elif score < 1.0:
+        elif score <= 1.0:
             return ConstraintSeverity.TIGHT
         else:
             return ConstraintSeverity.CRITICAL
@@ -168,6 +168,8 @@ class GlobalWarning:
     supply_demand_ratio: float
     risk_level: RiskLevel
     message: str
+    competing_subject_names: List[str] = field(default_factory=list)
+    competing_faculty_names: List[str] = field(default_factory=list)
 
 
 @dataclass

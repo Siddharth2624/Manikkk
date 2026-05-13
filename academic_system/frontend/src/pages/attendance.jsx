@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input, Label } from '../components/ui/input';
+import { Select } from '../components/ui/select';
 import { CheckCircle, XCircle, Calendar, UserCheck, AlertCircle, Loader2, ChevronDown, ChevronUp } from 'lucide-react';
 import { attendanceService } from '../services/attendance';
 import { adminService } from '../services/admin';
@@ -12,6 +13,7 @@ import { cn } from '../lib/utils';
 import { format } from 'date-fns';
 
 const ACADEMIC_YEAR = '2024-2025';
+const normalizeAttendanceStatus = (status) => (status === 'present' ? 'present' : 'absent');
 
 export default function AttendancePage() {
   const navigate = useNavigate();
@@ -34,6 +36,7 @@ export default function AttendancePage() {
 
   // Student summary state
   const [attendanceSummary, setAttendanceSummary] = useState([]);
+  const [selectedStudentSubject, setSelectedStudentSubject] = useState('');
   const [summaryLoading, setSummaryLoading] = useState(true);
   const [expandedSubjects, setExpandedSubjects] = useState({});
 
@@ -156,7 +159,7 @@ export default function AttendancePage() {
         // Load existing attendance
         const existing = {};
         data.records.forEach(record => {
-          existing[record.student_id] = record.status;
+          existing[record.student_id] = normalizeAttendanceStatus(record.status);
         });
         setAttendance(existing);
         setExistingAttendance(data.records);
@@ -179,10 +182,16 @@ export default function AttendancePage() {
     setSummaryLoading(true);
     try {
       const data = await attendanceService.getMySummary();
-      setAttendanceSummary(data.summaries || []);
+      const summaries = data.summaries || [];
+      setAttendanceSummary(summaries);
+      setSelectedStudentSubject((currentSubjectId) => {
+        const stillAvailable = summaries.some((summary) => summary.subject_id === currentSubjectId);
+        return stillAvailable ? currentSubjectId : summaries[0]?.subject_id || '';
+      });
     } catch (err) {
       console.error('Failed to fetch attendance summary:', err);
       setAttendanceSummary([]);
+      setSelectedStudentSubject('');
     } finally {
       setSummaryLoading(false);
     }
@@ -195,7 +204,7 @@ export default function AttendancePage() {
     try {
       const attendanceData = Object.entries(attendance).map(([studentId, status]) => ({
         student_id: studentId,
-        status: status,
+        status: normalizeAttendanceStatus(status),
         remarks: '',
       }));
 
@@ -227,21 +236,20 @@ export default function AttendancePage() {
   const setAttendanceStatus = (studentId, status) => {
     setAttendance(prev => ({
       ...prev,
-      [studentId]: status,
+      [studentId]: normalizeAttendanceStatus(status),
     }));
   };
 
   const toggleSubjectExpanded = (subjectId) => {
     setExpandedSubjects(prev => ({
       ...prev,
-      [subjectId]: !prev[subjectId]
+      [subjectId]: !(prev[subjectId] ?? true)
     }));
   };
 
   // Calculate stats for faculty view
   const presentCount = Object.values(attendance).filter(s => s === 'present').length;
   const absentCount = Object.values(attendance).filter(s => s === 'absent').length;
-  const excusedCount = Object.values(attendance).filter(s => s === 'excused').length;
 
   // ==================== FACULTY VIEW ====================
   if (view === 'faculty') {
@@ -364,10 +372,6 @@ export default function AttendancePage() {
                 <span className="text-sm text-muted-foreground">Absent</span>
                 <span className="text-lg font-bold text-red-600">{absentCount}</span>
               </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-muted-foreground">Excused</span>
-                <span className="text-lg font-bold text-yellow-600">{excusedCount}</span>
-              </div>
               <div className="pt-2 border-t">
                 <div className="flex items-center justify-between">
                   <span className="text-sm font-medium">Total</span>
@@ -448,26 +452,23 @@ export default function AttendancePage() {
             <CardContent>
               <div className="space-y-2">
                 {students.map((student) => {
-                  const status = attendance[student.id] || 'present';
+                  const status = normalizeAttendanceStatus(attendance[student.id] || 'present');
                   return (
                     <div
                       key={student.id}
                       className={cn(
                         "flex items-center justify-between p-4 rounded-lg border transition-all",
                         status === 'present' && "bg-green-50 border-green-200 dark:bg-green-900/20 dark:border-green-800",
-                        status === 'absent' && "bg-red-50 border-red-200 dark:bg-red-900/20 dark:border-red-800",
-                        status === 'excused' && "bg-yellow-50 border-yellow-200 dark:bg-yellow-900/20 dark:border-yellow-800"
+                        status === 'absent' && "bg-red-50 border-red-200 dark:bg-red-900/20 dark:border-red-800"
                       )}
                     >
                       <div className="flex items-center space-x-4">
                         <div className={cn(
                           status === 'present' && 'text-green-600',
-                          status === 'absent' && 'text-red-600',
-                          status === 'excused' && 'text-yellow-600'
+                          status === 'absent' && 'text-red-600'
                         )}>
                           {status === 'present' && <CheckCircle className="h-5 w-5" />}
                           {status === 'absent' && <XCircle className="h-5 w-5" />}
-                          {status === 'excused' && <AlertCircle className="h-5 w-5" />}
                         </div>
                         <div>
                           <p className="font-medium">{student.full_name}</p>
@@ -475,7 +476,7 @@ export default function AttendancePage() {
                         </div>
                       </div>
                       <div className="flex items-center gap-1">
-                        {['present', 'absent', 'excused'].map((s) => (
+                        {['present', 'absent'].map((s) => (
                           <button
                             key={s}
                             onClick={() => setAttendanceStatus(student.id, s)}
@@ -483,8 +484,7 @@ export default function AttendancePage() {
                               "px-3 py-1 text-xs font-medium rounded-md transition-colors",
                               status === s
                                 ? s === 'present' ? "bg-green-600 text-white"
-                                  : s === 'absent' ? "bg-red-600 text-white"
-                                  : "bg-yellow-600 text-white"
+                                  : "bg-red-600 text-white"
                                 : "bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-400"
                             )}
                           >
@@ -524,11 +524,16 @@ export default function AttendancePage() {
 
   // ==================== STUDENT VIEW ====================
   if (view === 'student') {
-    // Calculate overall stats
-    const totalClasses = attendanceSummary.reduce((sum, s) => sum + s.total_classes, 0);
-    const totalPresent = attendanceSummary.reduce((sum, s) => sum + s.present, 0);
-    const overallPercentage = totalClasses > 0 ? Math.round((totalPresent / totalClasses) * 100) : 0;
-    const belowThreshold = attendanceSummary.some(s => s.is_below_threshold);
+    const selectedSummary = attendanceSummary.find(
+      (summary) => summary.subject_id === selectedStudentSubject
+    ) || attendanceSummary[0] || null;
+    const selectedSubjectName = selectedSummary?.subject?.name || selectedSummary?.subject_name || 'Unknown Subject';
+    const selectedSubjectCode = selectedSummary?.subject?.code || selectedSummary?.subject_code || 'N/A';
+    const selectedPercentage = selectedSummary?.percentage || 0;
+    const selectedTotalClasses = selectedSummary?.total_classes || 0;
+    const selectedPresent = selectedSummary?.present || 0;
+    const selectedAbsent = selectedSummary?.absent || 0;
+    const selectedBelowThreshold = Boolean(selectedSummary?.is_below_threshold);
 
     return (
       <div className="space-y-6">
@@ -536,7 +541,7 @@ export default function AttendancePage() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight">My Attendance</h1>
           <p className="text-muted-foreground">
-            Track your class attendance across all subjects
+            Select a subject to view your attendance for Semester {currentUser?.semester || '-'}, Section {currentUser?.section || '-'}
           </p>
         </div>
 
@@ -550,33 +555,69 @@ export default function AttendancePage() {
           <Card>
             <CardContent className="flex flex-col items-center justify-center py-12">
               <Calendar className="h-12 w-12 text-muted-foreground mb-4" />
-              <p className="text-muted-foreground">No attendance records found.</p>
-              <p className="text-sm text-muted-foreground mt-2">Attendance will appear here once faculty starts marking.</p>
+              <p className="text-muted-foreground">No subjects found for your semester and section.</p>
+              <p className="text-sm text-muted-foreground mt-2">Attendance will appear here once subjects are assigned and faculty starts marking.</p>
             </CardContent>
           </Card>
         ) : (
           <>
-            {/* Overall Stats */}
+            {/* Subject Selector */}
+            <div className="grid gap-4 lg:grid-cols-[1fr_220px]">
+              <Card>
+                <CardHeader className="pb-4">
+                  <CardTitle className="text-lg">Select Subject</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <Select
+                    value={selectedSummary?.subject_id || ''}
+                    onChange={(event) => setSelectedStudentSubject(event.target.value)}
+                  >
+                    {attendanceSummary.map((summary) => {
+                      const subjectName = summary.subject?.name || summary.subject_name || 'Unknown Subject';
+                      const subjectCode = summary.subject?.code || summary.subject_code || 'N/A';
+                      return (
+                        <option key={summary.subject_id} value={summary.subject_id}>
+                          {subjectCode} - {subjectName}
+                        </option>
+                      );
+                    })}
+                  </Select>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="pb-4">
+                  <CardTitle className="text-sm font-medium text-muted-foreground">Subjects</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <span className="text-3xl font-bold">{attendanceSummary.length}</span>
+                  <p className="text-xs text-muted-foreground mt-1">in your semester</p>
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* Selected Subject Stats */}
             <div className="grid gap-4 md:grid-cols-4">
               <Card>
                 <CardHeader className="pb-4">
-                  <CardTitle className="text-sm font-medium text-muted-foreground">Overall Attendance</CardTitle>
+                  <CardTitle className="text-sm font-medium text-muted-foreground">Attendance</CardTitle>
                 </CardHeader>
                 <CardContent>
                   <div className="flex items-end gap-2">
                     <span className={cn(
                       "text-3xl font-bold",
-                      overallPercentage >= 75 ? "text-green-600" :
-                      overallPercentage >= 60 ? "text-yellow-600" : "text-red-600"
+                      selectedTotalClasses === 0 ? "text-gray-600" :
+                      selectedPercentage >= 75 ? "text-green-600" :
+                      selectedPercentage >= 60 ? "text-yellow-600" : "text-red-600"
                     )}>
-                      {overallPercentage}%
+                      {selectedPercentage}%
                     </span>
-                    <span className="text-sm text-muted-foreground mb-1">of {totalClasses} classes</span>
+                    <span className="text-sm text-muted-foreground mb-1">selected subject</span>
                   </div>
-                  {belowThreshold && (
+                  {selectedBelowThreshold && (
                     <p className="text-xs text-red-600 mt-2 flex items-center gap-1">
                       <AlertCircle className="h-3 w-3" />
-                      Below 75% in some subjects
+                      Below 75%
                     </p>
                   )}
                 </CardContent>
@@ -587,7 +628,7 @@ export default function AttendancePage() {
                   <CardTitle className="text-sm font-medium text-muted-foreground">Present</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <span className="text-3xl font-bold text-green-600">{totalPresent}</span>
+                  <span className="text-3xl font-bold text-green-600">{selectedPresent}</span>
                   <p className="text-xs text-muted-foreground mt-1">classes attended</p>
                 </CardContent>
               </Card>
@@ -597,33 +638,39 @@ export default function AttendancePage() {
                   <CardTitle className="text-sm font-medium text-muted-foreground">Absent</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <span className="text-3xl font-bold text-red-600">{attendanceSummary.reduce((sum, s) => sum + s.absent, 0)}</span>
+                  <span className="text-3xl font-bold text-red-600">{selectedAbsent}</span>
                   <p className="text-xs text-muted-foreground mt-1">classes missed</p>
                 </CardContent>
               </Card>
 
               <Card>
                 <CardHeader className="pb-4">
-                  <CardTitle className="text-sm font-medium text-muted-foreground">Subjects</CardTitle>
+                  <CardTitle className="text-sm font-medium text-muted-foreground">Total Classes</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <span className="text-3xl font-bold">{attendanceSummary.length}</span>
-                  <p className="text-xs text-muted-foreground mt-1">with attendance</p>
+                  <span className="text-3xl font-bold">{selectedTotalClasses}</span>
+                  <p className="text-xs text-muted-foreground mt-1">marked so far</p>
                 </CardContent>
               </Card>
             </div>
 
-            {/* Subject-wise Details */}
+            {/* Selected Subject Details */}
             <Card>
               <CardHeader>
-                <CardTitle>Subject-wise Attendance</CardTitle>
+                <CardTitle className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                  <span>Selected Subject Attendance</span>
+                  <span className="text-sm font-normal text-muted-foreground">
+                    {selectedSubjectCode} - {selectedSubjectName}
+                  </span>
+                </CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="space-y-4">
-                  {attendanceSummary.map((subject) => {
-                    const isExpanded = expandedSubjects[subject.subject_id];
+                  {[selectedSummary].filter(Boolean).map((subject) => {
+                    const isExpanded = expandedSubjects[subject.subject_id] ?? true;
                     const percentage = subject.percentage || 0;
                     const isBelowThreshold = subject.is_below_threshold;
+                    const subjectName = subject.subject?.name || subject.subject_name || 'Unknown Subject';
 
                     return (
                       <div
@@ -644,7 +691,7 @@ export default function AttendancePage() {
                               {percentage}%
                             </div>
                             <div className="flex-1 text-left">
-                              <p className="font-medium">{subject.subject_name || 'Unknown Subject'}</p>
+                              <p className="font-medium">{subjectName}</p>
                               <p className="text-sm text-muted-foreground">
                                 {subject.total_classes} classes • {subject.present} present
                               </p>
@@ -677,7 +724,7 @@ export default function AttendancePage() {
 
                         {/* Expanded Details */}
                         {isExpanded && (
-                          <div className="p-4 border-t bg-gray-50 dark:bg-gray-800/50 grid grid-cols-3 gap-4">
+                          <div className="p-4 border-t bg-gray-50 dark:bg-gray-800/50 grid grid-cols-2 gap-4">
                             <div>
                               <p className="text-xs text-muted-foreground mb-1">Present</p>
                               <p className="text-lg font-bold text-green-600">{subject.present}</p>
@@ -685,10 +732,6 @@ export default function AttendancePage() {
                             <div>
                               <p className="text-xs text-muted-foreground mb-1">Absent</p>
                               <p className="text-lg font-bold text-red-600">{subject.absent}</p>
-                            </div>
-                            <div>
-                              <p className="text-xs text-muted-foreground mb-1">Excused</p>
-                              <p className="text-lg font-bold text-yellow-600">{subject.excused}</p>
                             </div>
                           </div>
                         )}
@@ -700,7 +743,7 @@ export default function AttendancePage() {
             </Card>
 
             {/* Warning if below threshold */}
-            {belowThreshold && (
+            {selectedBelowThreshold && (
               <div className="flex items-start gap-3 p-4 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800">
                 <AlertCircle className="h-5 w-5 text-red-600 dark:text-red-400 flex-shrink-0 mt-0.5" />
                 <div>
@@ -708,7 +751,7 @@ export default function AttendancePage() {
                     Attendance Warning
                   </p>
                   <p className="text-xs text-red-700 dark:text-red-400 mt-1">
-                    Your attendance is below 75% in one or more subjects. Please attend classes regularly to meet the attendance requirement.
+                    Your attendance is below 75% in {selectedSubjectName}. Please attend classes regularly to meet the attendance requirement.
                   </p>
                 </div>
               </div>

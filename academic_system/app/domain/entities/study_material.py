@@ -1,13 +1,14 @@
 """Study material domain entity."""
 
-from dataclasses import dataclass, field
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import date, datetime
 from typing import Optional, List
 from enum import Enum
 
 
 class MaterialType(str, Enum):
     """Type of study material."""
+    LINK = "link"
     PDF = "pdf"
     DOCUMENT = "document"
     PRESENTATION = "presentation"
@@ -29,16 +30,14 @@ class StudyMaterial:
         semester: Semester number (1-8)
         sections: List of sections this material is for (empty = all sections)
         faculty_id: ID of the faculty who uploaded
-        material_type: Type of material
-        file_url: URL to the stored file
-        file_name: Original file name
-        file_size: File size in bytes
-        upload_date: When the material was uploaded
-        download_count: Number of times downloaded
+        material_url: External material link, such as Google Drive
+        material_date: Class/material date for day-wise records
+        access_count: Number of times opened
         tags: Tags for categorization
         is_public: Whether material is publicly accessible
         created_at: Creation timestamp
         updated_at: Last update timestamp
+        material_type: Type of material
     """
     id: str
     title: str
@@ -47,23 +46,21 @@ class StudyMaterial:
     semester: int
     sections: List[str]
     faculty_id: str
-    material_type: MaterialType
-    file_url: str
-    file_name: str
-    file_size: int
-    upload_date: datetime
-    download_count: int
+    material_url: str
+    material_date: date
+    access_count: int
     tags: List[str]
     is_public: bool
     created_at: datetime
     updated_at: datetime
+    material_type: MaterialType = MaterialType.LINK
 
     def __post_init__(self):
         """Validate study material data."""
         if not 1 <= self.semester <= 8:
             raise ValueError("Semester must be between 1 and 8")
-        if self.file_size < 0:
-            raise ValueError("File size cannot be negative")
+        if not self.material_url:
+            raise ValueError("Material URL is required")
 
     def is_visible_to(self, student_semester: int, student_section: str) -> bool:
         """
@@ -81,14 +78,14 @@ class StudyMaterial:
             return False
         return True
 
-    def increment_download_count(self) -> None:
-        """Increment the download count."""
-        self.download_count += 1
+    def increment_access_count(self) -> None:
+        """Increment the access count."""
+        self.access_count += 1
         self.updated_at = datetime.utcnow()
 
-    def get_file_size_mb(self) -> float:
-        """Get file size in megabytes."""
-        return round(self.file_size / (1024 * 1024), 2)
+    def increment_download_count(self) -> None:
+        """Backward-compatible alias for older repository interface naming."""
+        self.increment_access_count()
 
     def add_tag(self, tag: str) -> None:
         """Add a tag to the material."""

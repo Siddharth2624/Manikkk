@@ -182,8 +182,9 @@ async def init_indexes():
 
     # Study materials indexes
     await safe_create_index(database.study_materials, [("subject_id", 1), ("semester", 1)])
+    await safe_create_index(database.study_materials, [("semester", 1), ("sections", 1), ("subject_id", 1)])
     await safe_create_index(database.study_materials, "faculty_id")
-    await safe_create_index(database.study_materials, "uploaded_at", -1)
+    await safe_create_index(database.study_materials, "material_date", -1)
     await safe_create_index(database.study_materials, "title")
 
     # Faculty availability indexes

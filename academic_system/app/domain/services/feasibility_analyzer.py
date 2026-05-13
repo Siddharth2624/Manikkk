@@ -67,6 +67,7 @@ class FeasibilityAnalyzer:
         subjects: List[Subject],
         faculty_availability: Dict[str, Dict[str, List[int]]],
         subject_faculty_map: Dict[str, str],
+        faculty_names: Optional[Dict[str, str]] = None,
     ) -> FeasibilityReport:
         """
         Perform comprehensive feasibility analysis.
@@ -81,6 +82,7 @@ class FeasibilityAnalyzer:
         Returns:
             FeasibilityReport with complete analysis results
         """
+        faculty_names = faculty_names or {}
         errors: List[str] = []
         local_warnings: List[LocalWarning] = []
         global_warnings: List[GlobalWarning] = []
@@ -89,11 +91,14 @@ class FeasibilityAnalyzer:
         # 1. Check for missing faculty assignments
         for subject in subjects:
             if subject.id not in subject_faculty_map:
-                errors.append(f"Subject {subject.code} has no assigned faculty")
+                errors.append(
+                    f"{subject.name} ({subject.code}) has no faculty assigned. "
+                    "Assign a faculty member before generating the timetable."
+                )
 
         # 2. Calculate constraint scores (using unique day-slot pairs)
         constraint_scores = self._calculate_constraint_scores(
-            subjects, faculty_availability, subject_faculty_map
+            subjects, faculty_availability, subject_faculty_map, faculty_names
         )
 
         # 3. Detect FAIL conditions
@@ -103,12 +108,14 @@ class FeasibilityAnalyzer:
         errors.extend(fail_errors)
 
         # 4. Detect bottlenecks (slots with >=3 competing faculty)
-        bottlenecks = self._detect_bottlenecks(faculty_availability, subject_faculty_map)
+        bottlenecks = self._detect_bottlenecks(
+            faculty_availability, subject_faculty_map, subjects, faculty_names
+        )
         global_warnings.extend(bottlenecks)
 
         # 5. Analyze lab feasibility (consecutive usable slot pairs)
         lab_feasible, lab_errors = self._analyze_lab_feasibility(
-            subjects, faculty_availability, subject_faculty_map
+            subjects, faculty_availability, subject_faculty_map, faculty_names
         )
         errors.extend(lab_errors)
 
@@ -141,7 +148,7 @@ class FeasibilityAnalyzer:
 
         # 10. Generate suggestions
         suggestions = self._generate_suggestions(
-            constraint_scores, bottlenecks, lab_feasible, low_diversity_faculty, subject_faculty_map
+            constraint_scores, bottlenecks, lab_feasible, low_diversity_faculty, subject_faculty_map, faculty_names
         )
 
         # 11. Determine overall status
@@ -179,12 +186,14 @@ class FeasibilityAnalyzer:
         subjects: List[Subject],
         faculty_availability: Dict[str, Dict[str, List[int]]],
         subject_faculty_map: Dict[str, str],
+        faculty_names: Optional[Dict[str, str]] = None,
     ) -> Dict[str, ConstraintScore]:
         """
         Calculate constraint scores for all subject-faculty pairs.
 
         Uses unique (day, slot) pairs for counting available slots.
         """
+        faculty_names = faculty_names or {}
         constraint_scores: Dict[str, ConstraintScore] = {}
 
         for subject in subjects:
@@ -202,15 +211,13 @@ class FeasibilityAnalyzer:
 
             unique_available = len(unique_pairs)
 
-            # Count consecutive pairs (excluding lunch slots 5, 6)
-            all_slots = sorted(slot for slots in avail.values() for slot in slots)
-            consecutive_pairs = self._count_consecutive_pairs(all_slots)
+            consecutive_pairs = self._count_same_day_consecutive_pairs(avail)
 
             constraint_score = ConstraintScore(
                 subject_id=subject.id,
                 faculty_id=faculty_id,
                 subject_name=subject.name,
-                faculty_name=self._get_faculty_name(faculty_id),
+                faculty_name=self._get_faculty_name(faculty_id, faculty_names),
                 required_slots=subject.classes_per_week,
                 unique_available_slots=unique_available,
                 consecutive_pairs_available=consecutive_pairs,
@@ -220,35 +227,32 @@ class FeasibilityAnalyzer:
 
         return constraint_scores
 
-    def _count_consecutive_pairs(self, slots: List[int]) -> int:
+    def _count_same_day_consecutive_pairs(self, availability: Dict[Any, List[int]]) -> int:
         """
-        Count consecutive slot pairs, excluding lunch slots.
+        Count consecutive slot pairs that occur on the same day.
 
         Args:
-            slots: Sorted list of slot numbers
+            availability: Day -> slot list
 
         Returns:
-            Number of consecutive pairs that don't span lunch
+            Number of same-day consecutive pairs
         """
-        if len(slots) < 2:
-            return 0
-
         count = 0
-        sorted_slots = sorted(set(slots))
-
-        for i in range(len(sorted_slots) - 1):
-            current = sorted_slots[i]
-            next_slot = sorted_slots[i + 1]
-
-            # Check if consecutive and neither is a lunch slot
-            if (
-                next_slot - current == 1
-                and current not in LUNCH_SLOTS
-                and next_slot not in LUNCH_SLOTS
-            ):
-                count += 1
+        for slots in availability.values():
+            slot_set = {int(slot) for slot in slots}
+            for slot in slot_set:
+                if slot + 1 in slot_set:
+                    count += 1
 
         return count
+
+    def _format_availability(self, availability: Dict[Any, List[int]]) -> str:
+        """Return compact availability text for error responses."""
+        parts = []
+        for day, slots in availability.items():
+            day_name = getattr(day, "value", str(day))
+            parts.append(f"{day_name}[{','.join(map(str, sorted(slots)))}]")
+        return ", ".join(parts) if parts else "None"
 
     def _detect_fail_conditions(
         self,
@@ -265,20 +269,21 @@ class FeasibilityAnalyzer:
         """
         errors: List[str] = []
 
-        # Check for critical constraints (score >= 1.0)
+        # Check for true shortages. A score of exactly 1.0 is tight, but it
+        # still has enough available slots and should not block generation.
         for subject_id, score in constraint_scores.items():
-            if score.severity == ConstraintSeverity.CRITICAL:
+            if score.unique_available_slots < score.required_slots:
                 subject = next((s for s in subjects if s.id == subject_id), None)
                 subject_code = subject.code if subject else subject_id
+                subject_name = subject.name if subject else score.subject_name
+                shortage = score.required_slots - score.unique_available_slots
                 errors.append(
-                    f"Subject {subject_code} requires {score.required_slots} slots "
-                    f"but faculty only has {score.unique_available_slots} unique slots available"
+                    f"{subject_name} ({subject_code}) cannot be scheduled for "
+                    f"{score.faculty_name}: needs {score.required_slots} teaching "
+                    f"slot(s), but only {score.unique_available_slots} available "
+                    f"slot(s) were found. Add at least {shortage} more available "
+                    f"slot(s), or assign this subject to another faculty member."
                 )
-
-        # Check for subjects with no faculty assigned
-        for subject in subjects:
-            if subject.id not in subject_faculty_map:
-                errors.append(f"Subject {subject.code} has no faculty assigned")
 
         return errors
 
@@ -286,6 +291,8 @@ class FeasibilityAnalyzer:
         self,
         faculty_availability: Dict[str, Dict[str, List[int]]],
         subject_faculty_map: Dict[str, str],
+        subjects: List[Subject],
+        faculty_names: Optional[Dict[str, str]] = None,
     ) -> List[GlobalWarning]:
         """
         Detect bottleneck slots (slots with >=3 competing faculty).
@@ -294,13 +301,17 @@ class FeasibilityAnalyzer:
             List of GlobalWarning for bottleneck slots
         """
         warnings: List[GlobalWarning] = []
+        faculty_names = faculty_names or {}
+        subject_labels = {
+            subject.id: f"{subject.code} - {subject.name}"
+            for subject in subjects
+        }
 
         # Count competition for each (day, slot) pair
         slot_competition: Dict[Tuple[str, int], Set[str]] = defaultdict(set)
-        faculty_names: Dict[str, str] = {}
 
         for faculty_id, avail in faculty_availability.items():
-            faculty_names[faculty_id] = self._get_faculty_name(faculty_id)
+            faculty_names[faculty_id] = self._get_faculty_name(faculty_id, faculty_names)
             for day, slots in avail.items():
                 for slot in slots:
                     slot_competition[(day, slot)].add(faculty_id)
@@ -308,24 +319,38 @@ class FeasibilityAnalyzer:
         # Find bottlenecks (>=3 competing faculty)
         for (day, slot), competing_faculty_set in slot_competition.items():
             if len(competing_faculty_set) >= BOTTLENECK_THRESHOLD:
-                # Get subject codes for competing faculty
-                subject_codes = [
+                # Get subjects for competing faculty
+                subject_ids = [
                     subj_id
                     for subj_id, fac_id in subject_faculty_map.items()
                     if fac_id in competing_faculty_set
                 ]
+                subject_names = [
+                    subject_labels.get(subject_id, subject_id)
+                    for subject_id in subject_ids
+                ]
 
-                competing_faculty_list = list(competing_faculty_set)
+                competing_faculty_list = sorted(competing_faculty_set)
+                competing_faculty_names = [
+                    faculty_names.get(faculty_id, self._get_faculty_name(faculty_id))
+                    for faculty_id in competing_faculty_list
+                ]
 
                 warnings.append(
                     GlobalWarning(
                         slot_number=slot,
                         time_range=self._get_time_range(slot),
-                        competing_subjects=subject_codes,
+                        competing_subjects=subject_ids,
                         competing_faculty=competing_faculty_list,
                         supply_demand_ratio=1.0 / len(competing_faculty_set),
                         risk_level=RiskLevel.HIGH if len(competing_faculty_set) >= 4 else RiskLevel.MEDIUM,
-                        message=f"Slot {slot} on {day} has {len(competing_faculty_set)} faculty competing",
+                        message=(
+                            f"{day} slot {slot} ({self._get_time_range(slot)}) has "
+                            f"{len(competing_faculty_set)} faculty competing: "
+                            f"{', '.join(competing_faculty_names)}"
+                        ),
+                        competing_subject_names=subject_names,
+                        competing_faculty_names=competing_faculty_names,
                     )
                 )
 
@@ -336,6 +361,7 @@ class FeasibilityAnalyzer:
         subjects: List[Subject],
         faculty_availability: Dict[str, Dict[str, List[int]]],
         subject_faculty_map: Dict[str, str],
+        faculty_names: Optional[Dict[str, str]] = None,
     ) -> Tuple[bool, List[str]]:
         """
         Analyze lab feasibility (requires consecutive usable slot pairs).
@@ -344,6 +370,7 @@ class FeasibilityAnalyzer:
             Tuple of (is_feasible, list of error messages)
         """
         errors: List[str] = []
+        faculty_names = faculty_names or {}
 
         for subject in subjects:
             if not subject.is_lab():
@@ -355,16 +382,17 @@ class FeasibilityAnalyzer:
 
             avail = faculty_availability.get(faculty_id, {})
 
-            # Get all slots and count consecutive pairs (excluding lunch)
-            all_slots = sorted(slot for slots in avail.values() for slot in slots)
-            consecutive_pairs = self._count_consecutive_pairs(all_slots)
+            consecutive_pairs = self._count_same_day_consecutive_pairs(avail)
 
             # Labs need at least one consecutive pair
             if consecutive_pairs == 0:
                 subject_code = subject.code
+                faculty_name = self._get_faculty_name(faculty_id, faculty_names)
                 errors.append(
-                    f"Lab {subject_code} has no consecutive slot pairs available "
-                    f"(excluding lunch slots {LUNCH_SLOTS})"
+                    f"{subject.name} ({subject_code}) is a lab assigned to {faculty_name}, "
+                    "but no same-day consecutive slot pair is available. "
+                    f"Current availability: {self._format_availability(avail)}. "
+                    f"Add two consecutive slots on the same day."
                 )
 
         return len(errors) == 0, errors
@@ -411,6 +439,23 @@ class FeasibilityAnalyzer:
                     continue
 
                 risk_level = RiskLevel.CRITICAL if score.severity == ConstraintSeverity.CRITICAL else RiskLevel.HIGH
+                if score.unique_available_slots == score.required_slots:
+                    message = (
+                        f"{subject.code} is tightly constrained for {score.faculty_name}: "
+                        f"needs exactly {score.required_slots} slot(s) and has exactly "
+                        f"{score.unique_available_slots}. Generation may fail if any of "
+                        "those slots are taken by lunch, another section, or another subject."
+                    )
+                    suggestion = (
+                        f"Add at least one extra available slot for {score.faculty_name}, "
+                        "preferably on a different day."
+                    )
+                else:
+                    message = (
+                        f"{subject.code} is {score.severity.value.lower()} for {score.faculty_name}: "
+                        f"requires {score.required_slots} slot(s), has {score.unique_available_slots}."
+                    )
+                    suggestion = "Consider adding more available slots or diversifying across days"
 
                 warnings.append(
                     LocalWarning(
@@ -421,11 +466,8 @@ class FeasibilityAnalyzer:
                         risk_level=risk_level,
                         constraint_score=score.score,
                         severity=score.severity,
-                        message=(
-                            f"{subject.code} is {score.severity.value.lower()}: "
-                            f"requires {score.required_slots} slots, has {score.unique_available_slots}"
-                        ),
-                        suggestion="Consider adding more available slots or diversifying across days",
+                        message=message,
+                        suggestion=suggestion,
                     )
                 )
 
@@ -456,6 +498,7 @@ class FeasibilityAnalyzer:
         lab_feasible: bool,
         low_diversity_faculty: List[str],
         subject_faculty_map: Dict[str, str],
+        faculty_names: Optional[Dict[str, str]] = None,
     ) -> List[Suggestion]:
         """
         Generate suggestions for improving feasibility.
@@ -464,6 +507,7 @@ class FeasibilityAnalyzer:
             List of Suggestion entities
         """
         suggestions: List[Suggestion] = []
+        faculty_names = faculty_names or {}
 
         # Suggestions for tight/critical constraints
         for subject_id, score in constraint_scores.items():
@@ -474,7 +518,7 @@ class FeasibilityAnalyzer:
                             target_faculty_id=score.faculty_id,
                             target_subject_id=subject_id,
                             suggestion_type=SuggestionType.ADD_SLOTS,
-                            message=f"Add more available slots for {score.subject_name}",
+                            message=f"Add more available slots for {score.subject_name} ({score.faculty_name})",
                             priority=SuggestionPriority.HIGH if score.severity == ConstraintSeverity.CRITICAL else SuggestionPriority.MEDIUM,
                             expected_impact="Increases flexibility for scheduling",
                         )
@@ -506,7 +550,7 @@ class FeasibilityAnalyzer:
                         target_faculty_id=faculty_id,
                         target_subject_id=subject_id,
                         suggestion_type=SuggestionType.ADD_AFTERNOON,
-                        message=f"Consider afternoon availability for {self._get_faculty_name(faculty_id)}",
+                        message=f"Consider afternoon availability for {self._get_faculty_name(faculty_id, faculty_names)}",
                         priority=SuggestionPriority.LOW,
                         expected_impact="Reduces competition for peak morning slots",
                     )
@@ -549,7 +593,7 @@ class FeasibilityAnalyzer:
                     target_faculty_id=faculty_id,
                     target_subject_id=subject_id,
                     suggestion_type=SuggestionType.DIVERSIFY_SLOTS,
-                    message=f"Expand {self._get_faculty_name(faculty_id)}'s slot diversity",
+                    message=f"Expand {self._get_faculty_name(faculty_id, faculty_names)}'s slot diversity",
                     priority=SuggestionPriority.MEDIUM,
                     expected_impact="Improves scheduling flexibility",
                 )
@@ -636,23 +680,38 @@ class FeasibilityAnalyzer:
         return estimated
 
     # -------------------------------------------------------------------------
-    # Helper methods (placeholder implementations for names/time ranges)
+    # Helper methods
     # -------------------------------------------------------------------------
 
-    def _get_faculty_name(self, faculty_id: str) -> str:
-        """
-        Get faculty name from ID (placeholder).
+    def _get_faculty_name(
+        self,
+        faculty_id: str,
+        faculty_names: Optional[Dict[str, str]] = None
+    ) -> str:
+        """Return a readable faculty name, falling back to a short ID label."""
+        if not faculty_id:
+            return "Unassigned faculty"
 
-        In production, this would query a user repository.
-        """
-        return f"Faculty_{faculty_id}"
+        faculty_names = faculty_names or {}
+        if faculty_names.get(faculty_id):
+            return faculty_names[faculty_id]
+
+        return f"Faculty {faculty_id[-6:]}"
 
     def _get_time_range(self, slot_number: int) -> str:
         """
-        Get time range for a slot number (placeholder).
-
-        In production, this would use actual time slot configuration.
+        Get time range for a slot number.
         """
-        # Assuming 1-hour slots starting at 8 AM
-        start_hour = 7 + slot_number
-        return f"{start_hour:02d}:00-{start_hour + 1:02d}:00"
+        slot_ranges = {
+            1: "09:00 - 09:50",
+            2: "09:50 - 10:40",
+            3: "10:40 - 11:30",
+            4: "11:30 - 12:20",
+            5: "12:20 - 13:10",
+            6: "13:10 - 14:00",
+            7: "14:00 - 14:50",
+            8: "14:50 - 15:40",
+            9: "15:40 - 16:30",
+            10: "16:30 - 17:20",
+        }
+        return slot_ranges.get(slot_number, f"Slot {slot_number}")

@@ -1,5 +1,13 @@
+import { useEffect } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
-import { getUser } from './lib/api';
+import {
+  clearAuthSession,
+  getToken,
+  getTokenExpiresAt,
+  getUser,
+  isTokenExpired,
+  redirectToLogin,
+} from './lib/api';
 import { Layout } from './components/layout/layout';
 
 // Pages
@@ -20,8 +28,34 @@ import FacultyReportsPage from './pages/faculty/reports';
 // Protected Route Wrapper
 function ProtectedRoute({ children, allowedRoles = [] }) {
   const user = getUser();
+  const token = getToken();
+  const tokenExpired = isTokenExpired(token);
 
-  if (!user) {
+  useEffect(() => {
+    if (!token || tokenExpired) {
+      clearAuthSession();
+    }
+  }, [token, tokenExpired]);
+
+  useEffect(() => {
+    if (!token || tokenExpired) {
+      return undefined;
+    }
+
+    const expiresAt = getTokenExpiresAt(token);
+    if (!expiresAt) {
+      return undefined;
+    }
+
+    const timeoutId = window.setTimeout(
+      redirectToLogin,
+      Math.max(expiresAt - Date.now(), 0)
+    );
+
+    return () => window.clearTimeout(timeoutId);
+  }, [token, tokenExpired]);
+
+  if (!user || !token || tokenExpired) {
     return <Navigate to="/login" replace />;
   }
 

@@ -27,6 +27,20 @@ export const adminService = {
     return await api(`/admin/students/by-class?semester=${semester}&section=${section}`);
   },
 
+  // Get subjects list
+  getSubjects: async (params = {}) => {
+    const searchParams = new URLSearchParams(params);
+    return await api(`/admin/subjects?${searchParams}`);
+  },
+
+  // Create new subject
+  createSubject: async (subjectData) => {
+    return await api('/admin/subjects', {
+      method: 'POST',
+      body: JSON.stringify(subjectData),
+    });
+  },
+
   // Create new user
   createUser: async (userData) => {
     return await api('/admin/users', {

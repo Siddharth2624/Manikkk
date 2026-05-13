@@ -1,6 +1,6 @@
 """Attendance controller - FastAPI routes."""
 
-from typing import List, Optional
+from typing import List, Optional, Literal
 from fastapi import APIRouter, Depends, Query, HTTPException, status
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -25,7 +25,7 @@ router = APIRouter(prefix="/attendance", tags=["Attendance"])
 # DTOs
 class AttendanceItem(BaseModel):
     student_id: str
-    status: str  # present, absent, excused
+    status: Literal["present", "absent"]
     remarks: Optional[str] = None
 
 
@@ -99,6 +99,26 @@ async def get_my_attendance_summary(
         subject_id=subject_id
     )
 
+    response_summaries = []
+    for summary in summaries:
+        subject = await attendance_use_case.subject_repository.find_by_id(summary.subject_id)
+        response_summaries.append({
+            "subject_id": summary.subject_id,
+            "subject_name": subject.name if subject else "Unknown Subject",
+            "subject_code": subject.code if subject else "N/A",
+            "subject": {
+                "id": summary.subject_id,
+                "name": subject.name if subject else "Unknown Subject",
+                "code": subject.code if subject else "N/A"
+            },
+            "total_classes": summary.total_classes,
+            "present": summary.present_count,
+            "absent": summary.absent_count,
+            "excused": summary.excused_count,
+            "percentage": summary.percentage,
+            "is_below_threshold": summary.is_below_threshold
+        })
+
     return {
         "student": {
             "id": ctx.user_id,
@@ -106,18 +126,7 @@ async def get_my_attendance_summary(
             "semester": ctx.semester,
             "section": ctx.section
         },
-        "summaries": [
-            {
-                "subject_id": s.subject_id,
-                "total_classes": s.total_classes,
-                "present": s.present_count,
-                "absent": s.absent_count,
-                "excused": s.excused_count,
-                "percentage": s.percentage,
-                "is_below_threshold": s.is_below_threshold
-            }
-            for s in summaries
-        ]
+        "summaries": response_summaries
     }
 
 

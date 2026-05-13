@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button';
 import { timetableService } from '../services/timetable';
 import { getUser } from '../lib/api';
-import { Clock, Loader2, Edit } from 'lucide-react';
+import { Clock, Loader2, Edit, FileDown } from 'lucide-react';
 
 const TIME_SLOTS = [
   { slot: 1, time: '9:00 - 9:50' },
@@ -22,11 +22,268 @@ const TIME_SLOTS = [
 const DAYS = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY'];
 const DAY_SHORT = ['MON', 'TUE', 'WED', 'THU', 'FRI'];
 
+const escapeHtml = (value = '') =>
+  String(value).replace(/[&<>"']/g, (char) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#039;'
+  })[char]);
+
+const getSlotContentFromTimetable = (timetableData, dayIndex, slot) => {
+  if (!timetableData?.schedule) return null;
+
+  const dayData =
+    timetableData.schedule[dayIndex] ||
+    timetableData.schedule.find((day) => day.day === DAY_SHORT[dayIndex] || day.day === DAYS[dayIndex]);
+  if (!dayData) return null;
+
+  const slotData = dayData.slots?.find((item) => item.slot === slot) || dayData.slots?.[slot - 1];
+  if (!slotData) return null;
+
+  if (slotData.room === 'LUNCH') {
+    return {
+      isLunch: true,
+      label: 'Lunch Break'
+    };
+  }
+
+  if (!slotData.subject_id) return null;
+
+  return {
+    subject: slotData.subject?.name || slotData.subject_id,
+    faculty: slotData.faculty?.name || ''
+  };
+};
+
+const buildTimetableTableHtml = (timetableData) => {
+  const headerCells = TIME_SLOTS.map((slot) => `<th>${escapeHtml(slot.time)}</th>`).join('');
+  const bodyRows = DAYS.map((day, dayIndex) => {
+    const cells = TIME_SLOTS.map((slot) => {
+      const content = getSlotContentFromTimetable(timetableData, dayIndex, slot.slot);
+
+      if (content?.isLunch) {
+        return '<td><div class="cell lunch">Lunch Break</div></td>';
+      }
+
+      if (content) {
+        return `
+          <td>
+            <div class="cell class-cell">
+              <strong>${escapeHtml(content.subject)}</strong>
+              ${content.faculty ? `<span>${escapeHtml(content.faculty)}</span>` : ''}
+            </div>
+          </td>
+        `;
+      }
+
+      return '<td><div class="cell free">Free</div></td>';
+    }).join('');
+
+    return `<tr><th class="day-cell">${escapeHtml(DAY_SHORT[dayIndex] || day)}</th>${cells}</tr>`;
+  }).join('');
+
+  return `
+    <table>
+      <thead>
+        <tr>
+          <th class="day-cell">Day</th>
+          ${headerCells}
+        </tr>
+      </thead>
+      <tbody>
+        ${bodyRows}
+      </tbody>
+    </table>
+  `;
+};
+
+const buildTimetableSectionHtml = (timetableData) => {
+  const title = `Semester ${timetableData.semester} - Section ${timetableData.section}`;
+  return `
+    <section class="timetable-section">
+      <h2>${escapeHtml(title)}</h2>
+      ${buildTimetableTableHtml(timetableData)}
+    </section>
+  `;
+};
+
+const createPrintWindow = () => {
+  const printWindow = window.open('', '_blank');
+  if (!printWindow) {
+    alert('Please allow popups to download the timetable PDF.');
+    return null;
+  }
+
+  printWindow.document.write(`
+    <!doctype html>
+    <html>
+      <head>
+        <title>Preparing PDF</title>
+        <style>
+          body {
+            align-items: center;
+            color: #111827;
+            display: flex;
+            font-family: "Segoe UI", Arial, sans-serif;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+          }
+        </style>
+      </head>
+      <body>
+        Preparing timetable PDF...
+      </body>
+    </html>
+  `);
+  printWindow.document.close();
+  return printWindow;
+};
+
+const writePrintDocument = (printWindow, { title, subtitle, sectionsHtml }) => {
+  printWindow.document.open();
+  printWindow.document.write(`
+    <!doctype html>
+    <html>
+      <head>
+        <title>${escapeHtml(title)}</title>
+        <style>
+          @page {
+            size: landscape;
+            margin: 12mm;
+          }
+
+          * {
+            box-sizing: border-box;
+          }
+
+          body {
+            color: #111827;
+            font-family: "Segoe UI", Arial, sans-serif;
+            margin: 0;
+          }
+
+          .header {
+            border-bottom: 2px solid #111827;
+            margin-bottom: 18px;
+            padding-bottom: 10px;
+          }
+
+          h1 {
+            font-size: 24px;
+            margin: 0 0 4px;
+          }
+
+          h2 {
+            font-size: 18px;
+            margin: 0 0 12px;
+          }
+
+          p {
+            color: #4b5563;
+            font-size: 13px;
+            margin: 0;
+          }
+
+          table {
+            border-collapse: collapse;
+            table-layout: fixed;
+            width: 100%;
+          }
+
+          th,
+          td {
+            border: 1px solid #d1d5db;
+            padding: 7px;
+            text-align: center;
+            vertical-align: middle;
+          }
+
+          th {
+            background: #f3f4f6;
+            font-size: 11px;
+            font-weight: 700;
+          }
+
+          .day-cell {
+            width: 58px;
+          }
+
+          .cell {
+            align-items: center;
+            border-radius: 8px;
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
+            justify-content: center;
+            min-height: 58px;
+            padding: 7px;
+          }
+
+          .class-cell {
+            background: #f5f3ff;
+            border: 1px solid #c4b5fd;
+            color: #3b0764;
+          }
+
+          .class-cell strong {
+            font-size: 12px;
+            line-height: 1.25;
+          }
+
+          .class-cell span {
+            color: #6d28d9;
+            font-size: 10px;
+            line-height: 1.25;
+          }
+
+          .lunch {
+            background: #fffbeb;
+            border: 1px solid #fbbf24;
+            color: #92400e;
+            font-size: 12px;
+            font-weight: 700;
+          }
+
+          .free {
+            background: #f9fafb;
+            color: #9ca3af;
+            font-size: 12px;
+          }
+
+          .timetable-section {
+            break-after: page;
+            page-break-after: always;
+          }
+
+          .timetable-section:last-child {
+            break-after: auto;
+            page-break-after: auto;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <h1>${escapeHtml(title)}</h1>
+          <p>${escapeHtml(subtitle)}</p>
+        </div>
+        ${sectionsHtml}
+      </body>
+    </html>
+  `);
+  printWindow.document.close();
+  printWindow.focus();
+  window.setTimeout(() => printWindow.print(), 250);
+};
+
 export default function TimetablePage() {
   const navigate = useNavigate();
   const user = getUser();
   const [timetable, setTimetable] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [downloadingAll, setDownloadingAll] = useState(false);
   const [currentSemester, setCurrentSemester] = useState(user?.semester || 1);
   const [currentSection, setCurrentSection] = useState(user?.section || 'A');
 
@@ -49,30 +306,83 @@ export default function TimetablePage() {
   }, [currentSemester, currentSection]);
 
   const getSlotContent = (dayIndex, slot) => {
-    if (!timetable?.schedule) return null;
+    return getSlotContentFromTimetable(timetable, dayIndex, slot);
+  };
 
-    const dayData = timetable.schedule[dayIndex];
-    if (!dayData) return null;
+  const handleDownloadPdf = () => {
+    if (!timetable?.schedule) return;
 
-    const slotData = dayData.slots?.[slot - 1];
-    if (!slotData) return null;
+    const title = `Semester ${currentSemester} - Section ${currentSection} Timetable`;
+    const printWindow = createPrintWindow();
+    if (!printWindow) return;
 
-    // Check for lunch break (marked by room="LUNCH")
-    if (slotData.room === 'LUNCH') {
-      return {
-        isLunch: true,
-        label: 'Lunch Break'
-      };
+    writePrintDocument(printWindow, {
+      title,
+      subtitle: 'Generated from Academic System',
+      sectionsHtml: buildTimetableSectionHtml({
+        ...timetable,
+        semester: currentSemester,
+        section: currentSection
+      })
+    });
+  };
+
+  const handleDownloadAllPdf = async () => {
+    if (downloadingAll) return;
+
+    const printWindow = createPrintWindow();
+    if (!printWindow) return;
+
+    setDownloadingAll(true);
+    try {
+      const response = await timetableService.listTimetables();
+      const timetableItems = (response.timetables || [])
+        .slice()
+        .sort((a, b) => a.semester - b.semester || a.section.localeCompare(b.section));
+
+      if (timetableItems.length === 0) {
+        printWindow.close();
+        alert('No generated timetables found.');
+        return;
+      }
+
+      const loadedTimetables = await Promise.all(
+        timetableItems.map(async (item) => {
+          try {
+            const data = await timetableService.getTimetable(item.semester, item.section);
+            return {
+              ...data,
+              semester: item.semester,
+              section: item.section,
+            };
+          } catch (err) {
+            if (err.status === 401) throw err;
+            console.error(`Failed to load timetable for semester ${item.semester}, section ${item.section}:`, err);
+            return null;
+          }
+        })
+      );
+
+      const printableTimetables = loadedTimetables.filter((item) => item?.schedule);
+      if (printableTimetables.length === 0) {
+        printWindow.close();
+        alert('No printable timetables found.');
+        return;
+      }
+
+      writePrintDocument(printWindow, {
+        title: 'All Semester Timetables',
+        subtitle: `${printableTimetables.length} timetable(s) generated from Academic System`,
+        sectionsHtml: printableTimetables.map(buildTimetableSectionHtml).join('')
+      });
+    } catch (err) {
+      printWindow.close();
+      if (err.status !== 401) {
+        alert(err.message || 'Failed to prepare all timetables PDF.');
+      }
+    } finally {
+      setDownloadingAll(false);
     }
-
-    if (!slotData.subject_id) return null;
-
-    // Backend returns enriched data with subject and faculty embedded in slot
-    return {
-      subject: slotData.subject?.name || slotData.subject_id,
-      faculty: slotData.faculty?.name || '',
-      room: slotData.room || 'TBA'
-    };
   };
 
   return (
@@ -87,7 +397,24 @@ export default function TimetablePage() {
         </div>
 
         {/* Semester/Section Selector */}
-        <div className="flex items-center space-x-4">
+        <div className="flex flex-wrap items-center gap-3">
+          {user?.role === 'admin' && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleDownloadAllPdf}
+              disabled={downloadingAll}
+              className="gap-1"
+            >
+              {downloadingAll ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <FileDown className="h-4 w-4" />
+              )}
+              All Semesters PDF
+            </Button>
+          )}
+
           <select
             value={currentSemester}
             onChange={(e) => setCurrentSemester(parseInt(e.target.value))}
@@ -126,6 +453,15 @@ export default function TimetablePage() {
               <span>Semester {currentSemester} - Section {currentSection}</span>
               <div className="flex items-center gap-2">
                 <Clock className="h-5 w-5 text-muted-foreground" />
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={handleDownloadPdf}
+                  className="gap-1"
+                >
+                  <FileDown className="h-4 w-4" />
+                  Download PDF
+                </Button>
                 {user?.role === 'admin' && (
                   <Button
                     size="sm"
@@ -179,11 +515,6 @@ export default function TimetablePage() {
                                   {content.faculty && (
                                     <div className="text-xs text-violet-700 dark:text-violet-300 mt-1">
                                       {content.faculty}
-                                    </div>
-                                  )}
-                                  {content.room && (
-                                    <div className="text-xs text-muted-foreground mt-1">
-                                      Room: {content.room}
                                     </div>
                                   )}
                                 </div>

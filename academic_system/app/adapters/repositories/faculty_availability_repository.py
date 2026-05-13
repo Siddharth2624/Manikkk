@@ -97,6 +97,21 @@ class FacultyAvailabilityRepository(IFacultyAvailabilityRepository):
 
         return [self._to_entity(doc) for doc in documents]
 
+    async def find_by_faculty_and_subject(
+        self,
+        faculty_id: str,
+        subject_id: str,
+        semester: int,
+        section: str
+    ) -> Optional[FacultyAvailability]:
+        """Find availability for a specific faculty subject assignment."""
+        return await self.find(
+            faculty_id=faculty_id,
+            subject_id=subject_id,
+            semester=semester,
+            section=section
+        )
+
     async def update(self, availability: FacultyAvailability) -> FacultyAvailability:
         """Update existing availability record."""
         availability.updated_at = datetime.utcnow()

@@ -20,6 +20,7 @@ export default function AdminTimetablePage() {
   const [bulkResult, setBulkResult] = useState(null);
   const [error, setError] = useState(null);
   const [feasibilityReport, setFeasibilityReport] = useState(null);
+  const [generationConflictReport, setGenerationConflictReport] = useState(null);
 
   // Fetch assignments when semester/section changes
   useEffect(() => {
@@ -56,30 +57,28 @@ export default function AdminTimetablePage() {
     setResult(null);
     setBulkResult(null);
     setFeasibilityReport(null);
+    setGenerationConflictReport(null);
 
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL || '/api/v1'}/timetable/generate/simple`, {
+      const data = await api('/timetable/generate/simple', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('access_token')}`,
-        },
         body: JSON.stringify({ semester, section }),
       });
 
-      const data = await response.json();
-
-      if (!response.ok) {
-        // Check if it's a feasibility error (has report structure)
-        if (data.status && (data.status === 'fail' || data.status === 'warning')) {
-          setFeasibilityReport(data);
-          return;
-        }
-        throw new Error(data.detail || data.message || 'Failed to generate timetable');
-      }
-
       setResult(data);
     } catch (err) {
+      const data = err.data;
+      if (data?.status === 'generation_conflict') {
+        setGenerationConflictReport(data);
+        return;
+      }
+
+      // Check if it's a feasibility error (has report structure)
+      if (data?.status && (data.status === 'fail' || data.status === 'warning')) {
+        setFeasibilityReport(data);
+        return;
+      }
+
       setError(err.message || 'Failed to generate timetable');
     } finally {
       setGenerating(false);
@@ -92,6 +91,7 @@ export default function AdminTimetablePage() {
     setError(null);
     setResult(null);
     setBulkResult(null);
+    setGenerationConflictReport(null);
 
     try {
       const response = await api(`/timetable/generate/bulk?semester=${semester}`, {
@@ -141,14 +141,67 @@ export default function AdminTimetablePage() {
       {error && !feasibilityReport && (
         <TimetableConflictReport
           errorMessage={error}
+          assignments={assignments}
+          semester={semester}
+          section={section}
           onDismiss={() => setError(null)}
         />
       )}
 
+      {/* Structured Generation Conflict Report */}
+      {generationConflictReport && (
+        <TimetableConflictReport
+          conflictReport={generationConflictReport}
+          assignments={assignments}
+          semester={semester}
+          section={section}
+          onDismiss={() => setGenerationConflictReport(null)}
+        />
+      )}
+
       {/* Feasibility Conflict Report */}
+      {feasibilityReport?.errors?.length > 0 && (
+        <Card className="border-2 border-red-200 bg-red-50/60 dark:border-red-900 dark:bg-red-950/20">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-red-900 dark:text-red-200">
+              <AlertCircle className="h-5 w-5" />
+              Timetable generation is blocked
+            </CardTitle>
+            <CardDescription className="text-red-700 dark:text-red-300">
+              Resolve these availability issues, then generate again.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              {feasibilityReport.errors.map((message, index) => (
+                <div
+                  key={`${message}-${index}`}
+                  className="rounded-lg border border-red-200 bg-white px-3 py-2 text-sm text-red-900 dark:border-red-900 dark:bg-gray-950 dark:text-red-200"
+                >
+                  {message}
+                </div>
+              ))}
+            </div>
+            {feasibilityReport.suggestions?.length > 0 && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-900 dark:bg-amber-950/30">
+                <p className="mb-2 text-sm font-semibold text-amber-900 dark:text-amber-100">Suggested fixes</p>
+                <div className="space-y-1">
+                  {feasibilityReport.suggestions.slice(0, 4).map((suggestion, index) => (
+                    <p key={`${suggestion.message}-${index}`} className="text-sm text-amber-800 dark:text-amber-100">
+                      {suggestion.message}
+                    </p>
+                  ))}
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       {feasibilityReport && feasibilityReport.warnings && (
         <ConflictReport
           warnings={feasibilityReport.warnings}
+          assignments={assignments}
           onDismiss={() => setFeasibilityReport(null)}
         />
       )}
@@ -270,7 +323,7 @@ export default function AdminTimetablePage() {
                         {assignment.subject_name}
                       </p>
                       <p className="text-xs text-muted-foreground">
-                        {assignment.subject_code} • {assignment.credits} credit(s)
+                        {assignment.subject_code} - {assignment.credits} credit(s)
                       </p>
                     </div>
                     <div className="flex items-center gap-2">

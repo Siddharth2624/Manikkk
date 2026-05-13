@@ -63,18 +63,4 @@ export const facultyAvailabilityService = {
       method: 'DELETE',
     });
   },
-
-  getOccupiedSlots: async (semester, section) => {
-    const params = new URLSearchParams({
-      semester: semester.toString(),
-      section,
-    });
-    const data = await api(`/faculty/availability/occupied?${params.toString()}`);
-    // Convert backend format to frontend format "Day-Slot"
-    const slots = data?.occupied_slots || [];
-    return slots.map(s => {
-      const dayTitleCase = s.day.charAt(0) + s.day.slice(1).toLowerCase();
-      return `${dayTitleCase}-${s.slot}`;
-    });
-  },
 };
